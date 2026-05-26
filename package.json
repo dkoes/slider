@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "build": "node scripts/build.js",
     "typecheck": "tsc --noEmit",
@@ -14,7 +17,7 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.14",
-    "pdfjs-dist": "^3.11.174",
+    "pdfjs-dist": "^5.7.284",
     "typescript": "^5.8.3"
   }
 }
