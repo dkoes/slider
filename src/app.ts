@@ -748,36 +748,39 @@ async function advanceFourSlides(): Promise<void> {
     return;
   }
 
-  const [topRight, topLeft, bottomRight, bottomLeft] = activeFourSlides;
-  const [, topLeftIndex] = activeFourIndices;
-  const enteringIndex = nextFourSlideIndex;
-  nextFourSlideIndex = (nextFourSlideIndex + 1) % slides.length;
+  const [topLeft, topRight, bottomRight, bottomLeft] = activeFourSlides;
+  const [, topRightIndex] = activeFourIndices;
+  const bottomLeftIndex = activeFourIndices[3];
+  const welcomeIndex = getWelcomeSlideIndex();
+  const enteringIndex = bottomLeftIndex === welcomeIndex
+    ? bottomLeftIndex
+    : getNextFourSlideIndex();
 
-  // The visual order is top-right, top-left, bottom-right, bottom-left. Each tick
-  // moves left; the top-left tile exits left and reappears from the right as the
-  // new bottom-right tile, avoiding any diagonal movement.
+  // Four-up advances in a serpentine path: new content enters top-left, the top
+  // row shifts right, top-right wraps into bottom-right, and the bottom row
+  // shifts left as bottom-left leaves.
   const entering = createFourSlideArticle(enteringIndex);
-  entering.classList.add("quarter", "q4", "active");
+  entering.classList.add("quarter", "q0-enter", "active");
   stage.append(entering);
 
-  const wrapped = createFourSlideArticle(topLeftIndex);
+  const wrapped = createFourSlideArticle(topRightIndex);
   wrapped.classList.add("quarter", "q2-enter", "active");
   stage.append(wrapped);
 
   await waitForPaint();
   bottomLeft.classList.add("q-exit");
-  topRight && setQuarterClass(topRight, 1);
-  topLeft.classList.add("q-wrap-exit");
+  topLeft && setQuarterClass(topLeft, 1);
+  topRight.classList.add("q-wrap-exit");
   setQuarterClass(wrapped, 2);
   bottomRight && setQuarterClass(bottomRight, 3);
   setQuarterClass(entering, 0);
 
-  activeFourSlides = [entering, topRight, wrapped, bottomRight].filter(Boolean);
-  activeFourIndices = [enteringIndex, activeFourIndices[0], topLeftIndex, activeFourIndices[2]];
+  activeFourSlides = [entering, topLeft, wrapped, bottomRight].filter(Boolean);
+  activeFourIndices = [enteringIndex, activeFourIndices[0], topRightIndex, activeFourIndices[2]];
 
   window.setTimeout(() => {
     bottomLeft.remove();
-    topLeft.remove();
+    topRight.remove();
   }, 700);
 
   showDebugTitle(getFourUpTitle());
@@ -789,19 +792,64 @@ function initializeFourSlides(): void {
   activeFourSlides.forEach((node) => node.remove());
   activeFourSlides = [];
   activeFourIndices = [];
-  const count = Math.min(4, slides.length);
-  for (let offset = 0; offset < count; offset += 1) {
-    const index = (nextFourSlideIndex + offset) % slides.length;
+  const indices = getInitialFourSlideIndices();
+  for (let offset = 0; offset < indices.length; offset += 1) {
+    const index = indices[offset];
     const tile = createFourSlideArticle(index);
     tile.classList.add("quarter", `q${offset}`, "active");
     stage.append(tile);
     activeFourSlides.push(tile);
     activeFourIndices.push(index);
   }
-  nextFourSlideIndex = (nextFourSlideIndex + count) % slides.length;
   setDefaultFourUpTransformTarget();
   showDebugTitle(getFourUpTitle());
   preloadUpcomingPdfs();
+}
+
+function getInitialFourSlideIndices(): number[] {
+  const count = Math.min(4, slides.length);
+  const welcomeIndex = getWelcomeSlideIndex();
+  const indices: number[] = [];
+
+  if (welcomeIndex >= 0) {
+    indices.push(welcomeIndex);
+  }
+
+  while (indices.length < count) {
+    const index = getNextFourSlideIndex();
+    if (!indices.includes(index)) {
+      indices.push(index);
+    }
+  }
+
+  return indices;
+}
+
+function getNextFourSlideIndex(): number {
+  const welcomeIndex = getWelcomeSlideIndex();
+  const activeIndices = new Set(activeFourIndices);
+  const fallbackStart = nextFourSlideIndex;
+  for (let attempt = 0; attempt < slides.length; attempt += 1) {
+    const index = nextFourSlideIndex;
+    nextFourSlideIndex = (nextFourSlideIndex + 1) % slides.length;
+    if (index !== welcomeIndex && !activeIndices.has(index)) {
+      return index;
+    }
+  }
+
+  for (let attempt = 0; attempt < slides.length; attempt += 1) {
+    const index = (fallbackStart + attempt) % slides.length;
+    if (index !== welcomeIndex) {
+      nextFourSlideIndex = (index + 1) % slides.length;
+      return index;
+    }
+  }
+
+  return welcomeIndex >= 0 ? welcomeIndex : nextFourSlideIndex;
+}
+
+function getWelcomeSlideIndex(): number {
+  return slides.findIndex((slide) => /^welcome\.(html?|png|pdf)$/i.test(slide.name));
 }
 
 function createSlideArticle(slide: SlideItem): HTMLElement {
@@ -819,7 +867,7 @@ function createFourSlideArticle(index: number): HTMLElement {
 }
 
 function setQuarterClass(tile: HTMLElement, quarter: number): void {
-  tile.classList.remove("q-1", "q0", "q1", "q2", "q3", "q4", "q2-enter", "q-wrap-exit", "q-exit", "q-exit-reverse");
+  tile.classList.remove("q-1", "q0", "q1", "q2", "q3", "q4", "q0-enter", "q2-enter", "q-wrap-exit", "q-exit", "q-exit-reverse");
   tile.classList.add(`q${quarter}`);
 }
 

@@ -67,11 +67,11 @@ body {
 }
 
 .four-mode .slide.q0 {
-  transform: translate(100%, 0);
+  transform: translate(0, 0);
 }
 
 .four-mode .slide.q1 {
-  transform: translate(0, 0);
+  transform: translate(100%, 0);
 }
 
 .four-mode .slide.q2 {
@@ -86,12 +86,16 @@ body {
   transform: translate(200%, 0);
 }
 
+.four-mode .slide.q0-enter {
+  transform: translate(-100%, 0);
+}
+
 .four-mode .slide.q2-enter {
   transform: translate(200%, 100%);
 }
 
 .four-mode .slide.q-wrap-exit {
-  transform: translate(-100%, 0);
+  transform: translate(200%, 0);
   z-index: 1;
 }
 
