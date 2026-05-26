@@ -59,19 +59,19 @@ The agent keeps the last successfully synced slides if SharePoint becomes unreac
 The slideshow pauses for touch/mouse interaction and shows navigation plus zoom controls. The default interactive pause is 120 seconds. Override it with:
 
 ```text
-http://127.0.0.1:8788/slider.html?interactive_pause=180
+http://127.0.0.1:8788/slider.html?interactive_pause_seconds=180
 ```
 
-Announcement slides use `time` seconds per slide. Posters use `poster_time`; when it is not set, posters stay up for twice the announcement time.
+Announcement slides use `time_per_slide_seconds` seconds per slide. Posters use `poster_time_seconds`; when it is not set, posters stay up for twice the announcement time.
 
 ```text
-http://127.0.0.1:8788/slider.html?time=30&poster_time=90
+http://127.0.0.1:8788/slider.html?time_per_slide_seconds=30&poster_time_seconds=90
 ```
 
 To show four slides at once in equal quarters, add:
 
 ```text
-http://127.0.0.1:8788/slider.html?four=1
+http://127.0.0.1:8788/slider.html?four_up=1
 ```
 
 In four-up mode, each advance shifts the visible slides forward by one quarter and introduces one new slide.

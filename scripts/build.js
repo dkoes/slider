@@ -30,17 +30,21 @@ if (diagnostics.length > 0) {
   reportDiagnostics(diagnostics);
 }
 
-const [template, css, js, agentSource] = await Promise.all([
+const [template, css, js, agentSource, pdfJs, pdfWorkerJs] = await Promise.all([
   readFile(resolve(root, "src/template.html"), "utf8"),
   readFile(resolve(root, "src/styles.css"), "utf8"),
   readFile(resolve(jsBuildDir, "app.js"), "utf8"),
-  readFile(resolve(root, "scripts/slider_agent.py"), "utf8")
+  readFile(resolve(root, "scripts/slider_agent.py"), "utf8"),
+  readFile(resolve(root, "node_modules/pdfjs-dist/legacy/build/pdf.min.js"), "utf8"),
+  readFile(resolve(root, "node_modules/pdfjs-dist/legacy/build/pdf.worker.min.js"), "utf8")
 ]);
 
 const sliderConfig = await readOptionalJson(resolve(root, "slider_config.json"));
 const sliderDefaults = getSliderDefaults(sliderConfig);
 const html = template
   .replace("__SLIDER_DEFAULTS__", () => formatSliderDefaults(sliderDefaults))
+  .replace("__INLINE_PDF_JS__", () => pdfJs.trim())
+  .replace("__PDF_WORKER_SOURCE__", () => formatPdfWorkerSource(pdfWorkerJs))
   .replace("__INLINE_CSS__", () => css.trim())
   .replace("__INLINE_JS__", () => js.trim());
 const agent = agentSource.replace(
@@ -114,6 +118,12 @@ function formatSliderDefaults(defaults) {
   return assignments
     .map(([name, value]) => `      window.${name} = ${JSON.stringify(value)};`)
     .join("\n");
+}
+
+function formatPdfWorkerSource(workerSource) {
+  // PDF.js needs its worker as a URL. Store the source string in the self-contained
+  // HTML and let the app create an object URL at runtime.
+  return `      window.SLIDER_PDF_WORKER_SOURCE = ${JSON.stringify(workerSource)};`;
 }
 
 function firstDefined(...values) {

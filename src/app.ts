@@ -10,6 +10,32 @@ interface SliderGlobals {
   SLIDER_SYNC_STALE_AFTER_SECONDS?: number;
   SLIDER_FOUR_UP?: boolean;
   SLIDER_DEBUG?: boolean;
+  SLIDER_PDF_WORKER_SOURCE?: string;
+}
+
+interface PdfJsGlobal {
+  GlobalWorkerOptions: {
+    workerSrc: string;
+  };
+  getDocument(source: string | { url: string }): {
+    promise: Promise<PdfDocumentProxy>;
+  };
+}
+
+interface PdfDocumentProxy {
+  getPage(pageNumber: number): Promise<PdfPageProxy>;
+}
+
+interface PdfPageProxy {
+  getViewport(options: { scale: number }): PdfViewport;
+  render(options: { canvasContext: CanvasRenderingContext2D; viewport: PdfViewport }): {
+    promise: Promise<void>;
+  };
+}
+
+interface PdfViewport {
+  width: number;
+  height: number;
 }
 
 interface SlideItem {
@@ -103,6 +129,9 @@ let posterSlideshowIndex = -1;
 let cycleNeedsRefresh = true;
 let running = false;
 let config: SliderConfig;
+let pdfWorkerUrl = "";
+
+declare const pdfjsLib: PdfJsGlobal | undefined;
 
 start().catch((error: unknown) => {
   showBanner(`Slider failed to start: ${getErrorMessage(error)}`);
@@ -110,6 +139,7 @@ start().catch((error: unknown) => {
 
 async function start(): Promise<void> {
   config = getConfig();
+  configurePdfJs();
   wireControls();
   document.body.classList.toggle("four-mode", config.fourUp && appMode === "announcements");
   running = true;
@@ -196,19 +226,21 @@ function wireControls(): void {
 function getConfig(): SliderConfig {
   const globals = window as Window & SliderGlobals;
   const params = new URLSearchParams(window.location.search);
-  const manifestUrl = params.get("manifest")?.trim() || globals.SLIDER_MANIFEST_URL?.trim() || "/manifest.json";
-  const rawTime = params.get("time") || params.get("time_per_slide");
+  const manifestUrl = params.get("manifest_url")?.trim()
+    || globals.SLIDER_MANIFEST_URL?.trim()
+    || "/manifest.json";
+  const rawTime = params.get("time_per_slide_seconds");
   const parsedTime = rawTime ? Number(rawTime) : Number(globals.SLIDER_TIME_PER_SLIDE_SECONDS);
   const timePerSlideSeconds = Number.isFinite(parsedTime) && parsedTime > 0 ? parsedTime : 10;
-  const rawPosterTime = params.get("poster_time") || params.get("poster_time_per_slide");
+  const rawPosterTime = params.get("poster_time_seconds");
   const parsedPosterTime = rawPosterTime ? Number(rawPosterTime) : Number(globals.SLIDER_POSTER_TIME_SECONDS);
-  const rawInteractivePause = params.get("interactive_pause") || params.get("interactive_pause_seconds");
+  const rawInteractivePause = params.get("interactive_pause_seconds");
   const parsedInteractivePause = rawInteractivePause
     ? Number(rawInteractivePause)
     : Number(globals.SLIDER_INTERACTIVE_PAUSE_SECONDS);
-  const rawStaleAfter = params.get("stale_after") || params.get("sync_stale_after");
+  const rawStaleAfter = params.get("stale_after_seconds");
   const parsedStaleAfter = rawStaleAfter ? Number(rawStaleAfter) : Number(globals.SLIDER_SYNC_STALE_AFTER_SECONDS);
-  const fourUp = parseBooleanParam(params.get("four"), Boolean(globals.SLIDER_FOUR_UP));
+  const fourUp = parseBooleanParam(params.get("four_up"), Boolean(globals.SLIDER_FOUR_UP));
 
   return {
     manifestUrl,
@@ -221,6 +253,19 @@ function getConfig(): SliderConfig {
     fourUp,
     debug: parseBooleanParam(params.get("debug"), Boolean(globals.SLIDER_DEBUG))
   };
+}
+
+function configurePdfJs(): void {
+  const globals = window as Window & SliderGlobals;
+  if (typeof pdfjsLib === "undefined" || !globals.SLIDER_PDF_WORKER_SOURCE) {
+    return;
+  }
+
+  // The worker source is embedded at build time so the generated Python agent
+  // remains a single deployable file with no CDN or sidecar PDF.js assets.
+  const workerBlob = new Blob([globals.SLIDER_PDF_WORKER_SOURCE], { type: "text/javascript" });
+  pdfWorkerUrl = URL.createObjectURL(workerBlob);
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 }
 
 async function refreshSlides(config: SliderConfig): Promise<void> {
@@ -634,6 +679,7 @@ function createInteractiveViewport(slide: SlideItem): HTMLElement {
   const media = createSlideContent(slide);
   content.append(media);
   viewport.append(content);
+  setupPosterPan(viewport, media, slide);
   wireViewportInteractions(viewport);
 
   return viewport;
@@ -649,10 +695,12 @@ function createSlideContent(slide: SlideItem): HTMLElement {
     return image;
   }
 
+  if (slide.kind === "pdf") {
+    return createPdfContent(slide);
+  }
+
   const frame = document.createElement("iframe");
-  frame.src = slide.kind === "pdf"
-    ? getPdfViewerUrl(slide.url)
-    : slide.url;
+  frame.src = slide.url;
   frame.title = slide.name;
 
   if (slide.kind === "html") {
@@ -662,8 +710,113 @@ function createSlideContent(slide: SlideItem): HTMLElement {
   return frame;
 }
 
-function getPdfViewerUrl(url: string): string {
-  return `${url}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`;
+function createPdfContent(slide: SlideItem): HTMLElement {
+  const container = document.createElement("div");
+  container.className = "pdfjs-page";
+  container.setAttribute("role", "img");
+  container.setAttribute("aria-label", slide.name);
+
+  const canvas = document.createElement("canvas");
+  container.append(canvas);
+
+  renderPdfPage(slide, container, canvas).catch((error: unknown) => {
+    container.textContent = `Unable to display ${slide.name}.`;
+    showBanner(`Unable to display ${slide.name}: ${getErrorMessage(error)}`);
+  });
+
+  return container;
+}
+
+async function renderPdfPage(slide: SlideItem, container: HTMLElement, canvas: HTMLCanvasElement): Promise<void> {
+  if (typeof pdfjsLib === "undefined") {
+    throw new Error("PDF.js is not available.");
+  }
+
+  const documentProxy = await pdfjsLib.getDocument(slide.url).promise;
+  const page = await documentProxy.getPage(1);
+  const baseViewport = page.getViewport({ scale: 1 });
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const fitScale = Math.min(viewportWidth / baseViewport.width, viewportHeight / baseViewport.height);
+  const fullWidthScale = viewportWidth / baseViewport.width;
+  const renderScale = Math.max(fitScale, isPosterDisplayMode() ? fullWidthScale : fitScale);
+  const renderViewport = page.getViewport({ scale: renderScale * window.devicePixelRatio });
+  const cssWidth = baseViewport.width * renderScale;
+  const cssHeight = baseViewport.height * renderScale;
+  const fitWidth = baseViewport.width * fitScale;
+  const fitHeight = baseViewport.height * fitScale;
+
+  canvas.width = Math.ceil(renderViewport.width);
+  canvas.height = Math.ceil(renderViewport.height);
+  container.style.setProperty("--pdf-fit-width", `${fitWidth}px`);
+  container.style.setProperty("--pdf-fit-height", `${fitHeight}px`);
+  container.style.setProperty("--pdf-render-width", `${cssWidth}px`);
+  container.style.setProperty("--pdf-render-height", `${cssHeight}px`);
+  container.dataset.renderHeight = String(cssHeight);
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Canvas rendering is not available.");
+  }
+
+  await page.render({ canvasContext: context, viewport: renderViewport }).promise;
+  container.dispatchEvent(new Event("pdf-rendered"));
+}
+
+function setupPosterPan(viewport: HTMLElement, media: HTMLElement, slide: SlideItem): void {
+  if (!isPosterDisplayMode() || (slide.kind !== "image" && slide.kind !== "pdf")) {
+    return;
+  }
+
+  viewport.dataset.posterPan = "true";
+  media.classList.add("poster-pan-media");
+  viewport.style.setProperty("--poster-pan-duration", `${Math.max(6, getAutoplayDelaySeconds() - 1)}s`);
+
+  if (slide.kind === "image" && media instanceof HTMLImageElement) {
+    const updateImagePan = () => {
+      const naturalAspect = media.naturalWidth / media.naturalHeight;
+      const fullWidthHeight = window.innerWidth / naturalAspect;
+      updatePosterPanState(viewport, media, fullWidthHeight);
+    };
+
+    if (media.complete && media.naturalWidth > 0) {
+      updateImagePan();
+    } else {
+      media.addEventListener("load", updateImagePan, { once: true });
+    }
+    return;
+  }
+
+  if (slide.kind === "pdf") {
+    waitForPdfRender(media).then(() => {
+      updatePosterPanState(viewport, media, Number(media.dataset.renderHeight) || media.getBoundingClientRect().height);
+    });
+  }
+}
+
+function waitForPdfRender(media: HTMLElement): Promise<void> {
+  return new Promise((resolve) => {
+    if (media.dataset.renderHeight) {
+      resolve();
+      return;
+    }
+
+    media.addEventListener("pdf-rendered", () => resolve(), { once: true });
+  });
+}
+
+function updatePosterPanState(viewport: HTMLElement, media: HTMLElement, mediaHeight: number): void {
+  // Pan exactly the overflow. Short content keeps the centered fit layout, while
+  // tall posters stop with their bottom edge aligned to the viewport bottom.
+  const distance = Math.max(0, mediaHeight - window.innerHeight);
+  viewport.style.setProperty("--poster-pan-media-height", `${mediaHeight}px`);
+  viewport.style.setProperty("--poster-pan-distance", `${distance}px`);
+  viewport.dataset.panReady = distance > 1 ? "true" : "false";
+  media.classList.toggle("poster-pan-media", distance > 1);
+}
+
+function isPosterDisplayMode(): boolean {
+  return appMode === "posters" || appMode === "poster";
 }
 
 function wireViewportInteractions(viewport: HTMLElement): void {
