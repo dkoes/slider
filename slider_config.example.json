@@ -1,8 +1,14 @@
 {
-  "folder_url": "https://your-tenant.sharepoint.com/:f:/s/example/...",
+  "folder_url": "",
   "host": "127.0.0.1",
   "port": 8788,
-  "sync_interval_seconds": 300,
+  "sync_interval_seconds": 120,
   "stale_after_seconds": 1800,
-  "data_dir": "slider_data"
+  "data_dir": "slider_data",
+  "manifest_url": "/manifest.json",
+  "time_per_slide_seconds": 30,
+  "poster_time_seconds": 60,
+  "interactive_pause_seconds": 120,
+  "four_up": false,
+  "debug": false
 }

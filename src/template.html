@@ -5,13 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Slider</title>
     <script>
-      // Set these defaults here. URL parameters named manifest, time, and stale_after override them.
-      window.SLIDER_MANIFEST_URL = "/manifest.json";
-      window.SLIDER_TIME_PER_SLIDE_SECONDS = 30;
-      window.SLIDER_INTERACTIVE_PAUSE_SECONDS = 120;
-      window.SLIDER_SYNC_STALE_AFTER_SECONDS = 1800;
-      window.SLIDER_FOUR_UP = false;
-      window.SLIDER_DEBUG = false;
+__SLIDER_DEFAULTS__
     </script>
     <style>
 __INLINE_CSS__
@@ -23,6 +17,7 @@ __INLINE_CSS__
       <button id="menu-toggle" class="menu-toggle" type="button" aria-label="Open menu">☰</button>
       <nav id="menu-panel" class="menu-panel" aria-label="Slideshow menu">
         <button id="menu-announcements" class="menu-item" type="button">Announcements</button>
+        <button id="menu-posters" class="menu-item" type="button">Posters</button>
         <div class="menu-section">
           <button class="menu-item menu-parent" type="button">Labs</button>
           <div id="labs-menu" class="labs-menu"></div>

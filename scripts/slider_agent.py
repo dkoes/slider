@@ -36,7 +36,7 @@ SUPPORTED_EXTENSIONS = {
 DEFAULT_FOLDER_URL = ""
 DEFAULT_PORT = 8788
 DEFAULT_SYNC_INTERVAL_SECONDS = 120
-DEFAULT_STALE_AFTER_SECONDS = 600
+DEFAULT_STALE_AFTER_SECONDS = 1800
 EMBEDDED_SLIDER_HTML = None
 
 
@@ -144,6 +144,8 @@ class SharePointSyncer:
         with self.lock:
             attempt = utc_now()
             try:
+                # Keep sync atomic from the browser's perspective: download files,
+                # prune old files, then replace the manifest in one filesystem move.
                 content = self.fetch_content()
                 slides = content["slides"]
                 labs = content["labs"]
@@ -173,6 +175,8 @@ class SharePointSyncer:
                 "No SharePoint folder URL is configured. Set --folder, SLIDER_FOLDER_URL, or folder_url in slider_config.json."
             )
 
+        # Anonymous SharePoint links expose short-lived drive API URLs/tokens in
+        # the rendered page. We scrape those rather than requiring Graph auth.
         page_response = self.fetch_text(self.config.folder_url)
         page_context = parse_page_metadata(page_response.text)
         drive_url, access_token = get_drive_api_credentials(page_context["driveInfo"])
@@ -221,6 +225,8 @@ class SharePointSyncer:
         access_token: str,
         parent_parts: list[str],
     ) -> dict[str, Any]:
+        # Lab folders are mirrored recursively under slider_data/labs. Their
+        # manifest shape mirrors the folder tree so the browser can build flyouts.
         name = str(folder.get("name") or "Lab")
         safe_name = safe_filename(name)
         path_parts = parent_parts + [safe_name]
@@ -258,6 +264,8 @@ class SharePointSyncer:
         return self.fetch_all_children(make_item_children_url(drive_url, access_token, item_id))
 
     def fetch_all_children(self, url: str) -> list[dict[str, Any]]:
+        # Large SharePoint folders are paged; @odata.nextLink may contain a new
+        # pre-signed URL, so follow it exactly instead of rebuilding query params.
         children: list[dict[str, Any]] = []
         next_url = url
         while next_url:
@@ -284,6 +292,8 @@ class SharePointSyncer:
         if not name or not kind or not isinstance(download_url, str):
             return None
 
+        # Reuse unchanged local files so routine syncs are cheap and the display
+        # keeps working even when only manifest refreshes are happening.
         local_name = unique_name(safe_filename(name), used_names)
         local_path = directory / local_name
         modified = str(child.get("lastModifiedDateTime") or child.get("cTag") or child.get("eTag") or "")
@@ -312,6 +322,8 @@ class SharePointSyncer:
         }
 
     def remove_unlisted_files(self, slides: list[dict[str, str]], labs: list[dict[str, Any]]) -> None:
+        # Manifest URLs are percent-encoded, but local filesystem paths are not.
+        # Decode before comparing or files with spaces will be pruned incorrectly.
         wanted = {self.local_path_from_url(slide["url"]) for slide in slides}
         wanted.update(self.local_path_from_url(url) for url in collect_lab_urls(labs))
         for root in (self.config.slides_dir, self.config.labs_dir):
@@ -326,6 +338,8 @@ class SharePointSyncer:
         return self.config.data_dir / urllib.parse.unquote(url.lstrip("/"))
 
     def write_failure_manifest(self, attempt: str, error: str) -> None:
+        # Preserve the previous slide list on failures so the browser can keep
+        # showing cached local content while surfacing sync health in the banner.
         manifest = read_json(self.config.manifest_path) or {}
         sync = manifest.get("sync") if isinstance(manifest.get("sync"), dict) else {}
         manifest["generatedAt"] = attempt
@@ -427,6 +441,8 @@ def parse_page_metadata(html: str) -> dict[str, Any]:
     if not isinstance(context, dict):
         raise RuntimeError("SharePoint page context was not an object.")
 
+    # Some anonymous pages put drive fields outside _spPageContextInfo. Merge in
+    # those loose values so both personal OneDrive and group SharePoint links work.
     drive_info = context.get("driveInfo") if isinstance(context.get("driveInfo"), dict) else {}
     context["driveInfo"] = {
         **drive_info,
@@ -444,6 +460,8 @@ def optional_value(key: str, value: str) -> dict[str, str]:
 
 
 def get_drive_api_credentials(drive_info: dict[str, str]) -> tuple[str, str]:
+    # Do not mix v2.0 and v2.1 fields; SharePoint tokens are tied to their drive
+    # endpoint version and mismatched pairs fail with opaque 400/401 responses.
     if drive_info.get(".driveUrlV21") and drive_info.get(".driveAccessTokenV21"):
         return drive_info[".driveUrlV21"], drive_info[".driveAccessTokenV21"]
 
@@ -463,6 +481,8 @@ def parse_json_string_literal(value: str) -> str:
 
 
 def get_shared_folder_server_relative_path(response_url: str, html: str) -> str:
+    # Folder links often redirect to onedrive.aspx?id=...; the id is the reliable
+    # server-relative path when _spPageContextInfo.rootFolder is missing.
     parsed = urllib.parse.urlparse(response_url)
     query = urllib.parse.parse_qs(parsed.query)
     if query.get("id"):
@@ -568,6 +588,8 @@ def count_lab_items(labs: list[dict[str, Any]]) -> int:
 
 
 def download_atomic(opener: urllib.request.OpenerDirector, url: str, target: Path) -> None:
+    # Write to a sibling temp file first so interrupted downloads never leave a
+    # partial PDF/image at the URL currently advertised by the manifest.
     request = urllib.request.Request(url, headers=default_headers("*/*"))
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)

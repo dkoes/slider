@@ -37,7 +37,10 @@ const [template, css, js, agentSource] = await Promise.all([
   readFile(resolve(root, "scripts/slider_agent.py"), "utf8")
 ]);
 
+const sliderConfig = await readOptionalJson(resolve(root, "slider_config.json"));
+const sliderDefaults = getSliderDefaults(sliderConfig);
 const html = template
+  .replace("__SLIDER_DEFAULTS__", () => formatSliderDefaults(sliderDefaults))
   .replace("__INLINE_CSS__", () => css.trim())
   .replace("__INLINE_JS__", () => js.trim());
 const agent = agentSource.replace(
@@ -56,4 +59,88 @@ function reportDiagnostics(diagnostics) {
   });
   console.error(message);
   process.exit(1);
+}
+
+async function readOptionalJson(path) {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    if (error && error.code === "ENOENT") {
+      return {};
+    }
+
+    throw error;
+  }
+}
+
+function getSliderDefaults(config) {
+  const timePerSlideSeconds = positiveNumber(
+    firstDefined(config.time_per_slide_seconds, config.time_seconds, config.time),
+    30
+  );
+
+  return {
+    manifestUrl: stringValue(firstDefined(config.manifest_url, config.manifest), "/manifest.json"),
+    timePerSlideSeconds,
+    posterTimeSeconds: positiveNumber(
+      firstDefined(config.poster_time_seconds, config.poster_time),
+      timePerSlideSeconds * 2
+    ),
+    interactivePauseSeconds: positiveNumber(
+      firstDefined(config.interactive_pause_seconds, config.interactive_pause),
+      120
+    ),
+    syncStaleAfterSeconds: positiveNumber(
+      firstDefined(config.sync_stale_after_seconds, config.stale_after_seconds, config.stale_after),
+      1800
+    ),
+    fourUp: booleanValue(firstDefined(config.four_up, config.four), false),
+    debug: booleanValue(config.debug, false)
+  };
+}
+
+function formatSliderDefaults(defaults) {
+  // These are build-time defaults. Runtime URL parameters remain the final override.
+  const assignments = [
+    ["SLIDER_MANIFEST_URL", defaults.manifestUrl],
+    ["SLIDER_TIME_PER_SLIDE_SECONDS", defaults.timePerSlideSeconds],
+    ["SLIDER_POSTER_TIME_SECONDS", defaults.posterTimeSeconds],
+    ["SLIDER_INTERACTIVE_PAUSE_SECONDS", defaults.interactivePauseSeconds],
+    ["SLIDER_SYNC_STALE_AFTER_SECONDS", defaults.syncStaleAfterSeconds],
+    ["SLIDER_FOUR_UP", defaults.fourUp],
+    ["SLIDER_DEBUG", defaults.debug]
+  ];
+
+  return assignments
+    .map(([name, value]) => `      window.${name} = ${JSON.stringify(value)};`)
+    .join("\n");
+}
+
+function firstDefined(...values) {
+  return values.find((value) => value !== undefined && value !== null && value !== "");
+}
+
+function stringValue(value, fallback) {
+  return value === undefined || value === null || value === "" ? fallback : String(value);
+}
+
+function positiveNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function booleanValue(value, fallback) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+
+  return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
 }

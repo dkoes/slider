@@ -1,10 +1,11 @@
 type SlideKind = "image" | "pdf" | "html";
 type SyncStatus = "ok" | "syncing" | "error";
-type AppMode = "announcements" | "lab" | "poster";
+type AppMode = "announcements" | "posters" | "lab" | "poster";
 
 interface SliderGlobals {
   SLIDER_MANIFEST_URL?: string;
   SLIDER_TIME_PER_SLIDE_SECONDS?: number;
+  SLIDER_POSTER_TIME_SECONDS?: number;
   SLIDER_INTERACTIVE_PAUSE_SECONDS?: number;
   SLIDER_SYNC_STALE_AFTER_SECONDS?: number;
   SLIDER_FOUR_UP?: boolean;
@@ -46,6 +47,7 @@ interface LabFolder {
 interface SliderConfig {
   manifestUrl: string;
   timePerSlideSeconds: number;
+  posterTimeSeconds: number;
   interactivePauseSeconds: number;
   syncStaleAfterSeconds: number;
   fourUp: boolean;
@@ -70,6 +72,7 @@ const banner = mustGetElement("banner");
 const menuToggle = mustGetElement("menu-toggle") as HTMLButtonElement;
 const menuPanel = mustGetElement("menu-panel");
 const announcementsButton = mustGetElement("menu-announcements") as HTMLButtonElement;
+const postersButton = mustGetElement("menu-posters") as HTMLButtonElement;
 const labsMenu = mustGetElement("labs-menu");
 const previousButton = mustGetElement("previous-slide") as HTMLButtonElement;
 const nextButton = mustGetElement("next-slide") as HTMLButtonElement;
@@ -95,6 +98,8 @@ let interactivePauseUntil = 0;
 let controlsHideTimer = 0;
 let posterItems: SlideItem[] = [];
 let posterIndex = -1;
+let posterSlideshowItems: SlideItem[] = [];
+let posterSlideshowIndex = -1;
 let cycleNeedsRefresh = true;
 let running = false;
 let config: SliderConfig;
@@ -106,12 +111,20 @@ start().catch((error: unknown) => {
 async function start(): Promise<void> {
   config = getConfig();
   wireControls();
-  document.body.classList.toggle("four-mode", config.fourUp);
+  document.body.classList.toggle("four-mode", config.fourUp && appMode === "announcements");
   running = true;
   await refreshSlides(config);
 
+  // The slideshow loop advances announcement slides and the randomized poster
+  // stream. Lab browsing and selected poster detail views are user-driven modes.
   while (running) {
-    if (slides.length === 0) {
+    if (appMode === "lab" || appMode === "poster") {
+      await sleep(500);
+      continue;
+    }
+
+    const autoplayItems = getAutoplayItems();
+    if (autoplayItems.length === 0) {
       await sleep(5000);
       await refreshSlides(config);
       continue;
@@ -122,23 +135,21 @@ async function start(): Promise<void> {
       cycleNeedsRefresh = false;
     }
 
-    if (appMode !== "announcements") {
-      await sleep(500);
-      continue;
-    }
-
-    if (config.fourUp) {
+    if (appMode === "posters") {
+      posterSlideshowIndex = (posterSlideshowIndex + 1) % posterSlideshowItems.length;
+      await showSlide(posterSlideshowItems[posterSlideshowIndex]);
+    } else if (config.fourUp) {
       await advanceFourSlides();
     } else {
       slideIndex = (slideIndex + 1) % slides.length;
       await showSlide(slides[slideIndex]);
     }
 
-    if (slideIndex === slides.length - 1) {
+    if (isAutoplayPassComplete()) {
       cycleNeedsRefresh = true;
     }
 
-    await waitForAdvance(config.timePerSlideSeconds * 1000);
+    await waitForAdvance(getAutoplayDelaySeconds() * 1000);
   }
 }
 
@@ -151,6 +162,7 @@ function wireControls(): void {
   menuPanel.addEventListener("pointerdown", (event) => event.stopPropagation());
   menuPanel.addEventListener("click", (event) => event.stopPropagation());
   announcementsButton.addEventListener("click", () => showAnnouncements());
+  postersButton.addEventListener("click", () => showPosters());
   previousButton.addEventListener("click", () => showPreviousSlide());
   nextButton.addEventListener("click", () => showNextSlide());
   zoomInButton.addEventListener("click", () => {
@@ -187,6 +199,9 @@ function getConfig(): SliderConfig {
   const manifestUrl = params.get("manifest")?.trim() || globals.SLIDER_MANIFEST_URL?.trim() || "/manifest.json";
   const rawTime = params.get("time") || params.get("time_per_slide");
   const parsedTime = rawTime ? Number(rawTime) : Number(globals.SLIDER_TIME_PER_SLIDE_SECONDS);
+  const timePerSlideSeconds = Number.isFinite(parsedTime) && parsedTime > 0 ? parsedTime : 10;
+  const rawPosterTime = params.get("poster_time") || params.get("poster_time_per_slide");
+  const parsedPosterTime = rawPosterTime ? Number(rawPosterTime) : Number(globals.SLIDER_POSTER_TIME_SECONDS);
   const rawInteractivePause = params.get("interactive_pause") || params.get("interactive_pause_seconds");
   const parsedInteractivePause = rawInteractivePause
     ? Number(rawInteractivePause)
@@ -197,7 +212,10 @@ function getConfig(): SliderConfig {
 
   return {
     manifestUrl,
-    timePerSlideSeconds: Number.isFinite(parsedTime) && parsedTime > 0 ? parsedTime : 10,
+    timePerSlideSeconds,
+    // Posters default to a slower cadence because dense poster content generally
+    // needs more reading time than announcements.
+    posterTimeSeconds: Number.isFinite(parsedPosterTime) && parsedPosterTime > 0 ? parsedPosterTime : timePerSlideSeconds * 2,
     interactivePauseSeconds: Number.isFinite(parsedInteractivePause) && parsedInteractivePause > 0 ? parsedInteractivePause : 120,
     syncStaleAfterSeconds: Number.isFinite(parsedStaleAfter) && parsedStaleAfter > 0 ? parsedStaleAfter : 1800,
     fourUp,
@@ -214,6 +232,16 @@ async function refreshSlides(config: SliderConfig): Promise<void> {
     const slideCountChanged = slides.length !== nextSlides.length;
     slides = nextSlides;
     slideIndex = normalizeSlideIndex(slideIndex, slides.length);
+
+    // Poster mode is intentionally randomized once per pass. A manifest refresh
+    // starts the next pass with a new flattened order from every lab folder.
+    if (appMode === "posters" || posterSlideshowItems.length === 0) {
+      posterSlideshowItems = shuffleSlides(collectLabPosters(labs));
+      posterSlideshowIndex = -1;
+    }
+
+    // Four-up mode holds live DOM nodes for each quadrant; rebuild them when the
+    // manifest changes so stale indices do not point at removed slides.
     if (config.fourUp && slideCountChanged) {
       activeFourSlides.forEach((node) => node.remove());
       activeFourSlides = [];
@@ -222,9 +250,9 @@ async function refreshSlides(config: SliderConfig): Promise<void> {
     }
     updateSyncBanner(manifest, config);
 
-    if (slides.length === 0) {
-      showStaticMessage("No supported slides are available yet.");
-    } else {
+    if ((appMode === "announcements" || appMode === "posters") && getAutoplayItems().length === 0) {
+      showStaticMessage(getEmptyAutoplayMessage());
+    } else if (appMode === "announcements" || appMode === "posters") {
       clearStaticMessage();
     }
   } catch (error: unknown) {
@@ -239,6 +267,34 @@ async function fetchManifest(manifestUrl: string): Promise<SlideManifest> {
   }
 
   return (await response.json()) as SlideManifest;
+}
+
+function getAutoplayItems(): SlideItem[] {
+  if (appMode === "posters") {
+    return posterSlideshowItems;
+  }
+
+  if (appMode === "announcements") {
+    return slides;
+  }
+
+  return [];
+}
+
+function isAutoplayPassComplete(): boolean {
+  return appMode === "posters"
+    ? posterSlideshowIndex === posterSlideshowItems.length - 1
+    : slideIndex === slides.length - 1;
+}
+
+function getEmptyAutoplayMessage(): string {
+  return appMode === "posters"
+    ? "No lab poster content is available yet."
+    : "No supported slides are available yet.";
+}
+
+function getAutoplayDelaySeconds(): number {
+  return appMode === "posters" ? config.posterTimeSeconds : config.timePerSlideSeconds;
 }
 
 function updateSyncBanner(manifest: SlideManifest, config: SliderConfig): void {
@@ -289,12 +345,14 @@ function formatAge(ageSeconds: number): string {
 }
 
 async function showSlide(slide: SlideItem): Promise<void> {
-  if (appMode === "announcements" || appMode === "poster") {
+  if (appMode === "announcements" || appMode === "posters" || appMode === "poster") {
     stage.querySelectorAll(".lab-view").forEach((node) => node.remove());
   }
   activeFourSlides.forEach((node) => node.remove());
   activeFourSlides = [];
 
+  // Append first, then wait one frame before toggling classes so CSS transitions
+  // see a real "before" and "after" state.
   const next = document.createElement("article");
   next.className = "slide";
   next.setAttribute("aria-label", slide.name);
@@ -353,7 +411,7 @@ function showAnnouncements(): void {
   posterItems = [];
   posterIndex = -1;
   menuPanel.classList.remove("open");
-  pauseForInteraction();
+  exitInteractiveMode();
   stage.querySelectorAll(".lab-view").forEach((node) => node.remove());
   activeFourSlides.forEach((node) => node.remove());
   activeFourSlides = [];
@@ -361,8 +419,33 @@ function showAnnouncements(): void {
   activeSlide?.remove();
   activeSlide = null;
   if (slides.length > 0) {
-    slideIndex = normalizeSlideIndex(slideIndex, slides.length);
-    void showSlide(slides[(slideIndex + 1) % slides.length]);
+    slideIndex = (normalizeSlideIndex(slideIndex, slides.length) + 1) % slides.length;
+    void showSlide(slides[slideIndex]);
+  }
+}
+
+function showPosters(): void {
+  setAppMode("posters");
+  posterItems = [];
+  posterIndex = -1;
+  menuPanel.classList.remove("open");
+  exitInteractiveMode();
+  stage.querySelectorAll(".lab-view").forEach((node) => node.remove());
+  activeFourSlides.forEach((node) => node.remove());
+  activeFourSlides = [];
+  activeFourIndices = [];
+  activeSlide?.remove();
+  activeSlide = null;
+
+  // Entering Posters starts a fresh randomized pass through every non-index file
+  // under Labs; later passes refresh the manifest first and reshuffle again.
+  posterSlideshowItems = shuffleSlides(collectLabPosters(labs));
+  posterSlideshowIndex = -1;
+  if (posterSlideshowItems.length > 0) {
+    posterSlideshowIndex = 0;
+    void showSlide(posterSlideshowItems[posterSlideshowIndex]);
+  } else {
+    showStaticMessage(getEmptyAutoplayMessage());
   }
 }
 
@@ -378,6 +461,8 @@ function showLab(lab: LabFolder): void {
   activeFourSlides = [];
   stage.querySelectorAll(".slide, .lab-view").forEach((node) => node.remove());
 
+  // Lab mode is a split browsing view: index.html on the left, poster chooser on
+  // the right. Selecting a poster switches back to fullscreen slide rendering.
   const view = document.createElement("article");
   view.className = "lab-view active";
   view.setAttribute("aria-label", lab.name);
@@ -467,6 +552,9 @@ async function advanceFourSlides(): Promise<void> {
   const enteringIndex = nextFourSlideIndex;
   nextFourSlideIndex = (nextFourSlideIndex + 1) % slides.length;
 
+  // The visual order is top-right, top-left, bottom-right, bottom-left. Each tick
+  // moves left; the top-left tile exits left and reappears from the right as the
+  // new bottom-right tile, avoiding any diagonal movement.
   const entering = createFourSlideArticle(enteringIndex);
   entering.classList.add("quarter", "q4", "active");
   stage.append(entering);
@@ -574,6 +662,8 @@ function createSlideContent(slide: SlideItem): HTMLElement {
 }
 
 function wireViewportInteractions(viewport: HTMLElement): void {
+  // Pointer events drive both mouse dragging and touch gestures. Each active slide
+  // keeps its own transform so zoom/pan survives brief focus changes in four-up.
   viewport.addEventListener("pointerdown", (event) => {
     pauseForInteraction();
     setActiveTransformTarget(viewport);
@@ -680,6 +770,15 @@ function showControls(): void {
 function setAppMode(mode: AppMode): void {
   appMode = mode;
   document.body.classList.toggle("lab-mode", mode === "lab");
+  document.body.classList.toggle("four-mode", config.fourUp && mode === "announcements");
+}
+
+function exitInteractiveMode(): void {
+  // Menu navigation into autoplay modes should not inherit the paused, overlayed
+  // state that was only needed to operate the menu.
+  interactivePauseUntil = 0;
+  window.clearTimeout(controlsHideTimer);
+  document.body.classList.remove("interactive");
 }
 
 function resetTransform(): void {
@@ -710,6 +809,8 @@ function zoomAt(factor: number, clientX: number = window.innerWidth / 2, clientY
   const centerX = window.innerWidth / 2;
   const centerY = window.innerHeight / 2;
 
+  // Keep the point under the cursor/finger stationary while scaling around the
+  // viewport center, then clamp so blank space cannot dominate the screen.
   activeTransform = clampTransform({
     scale: nextScale,
     x: (activeTransform.x - (clientX - centerX)) * scaleChange + (clientX - centerX),
@@ -777,6 +878,12 @@ function showPreviousSlide(): void {
     return;
   }
 
+  if (appMode === "posters" && posterSlideshowItems.length > 0) {
+    posterSlideshowIndex = (posterSlideshowIndex - 1 + posterSlideshowItems.length) % posterSlideshowItems.length;
+    void showSlide(posterSlideshowItems[posterSlideshowIndex]);
+    return;
+  }
+
   if (slides.length === 0) {
     return;
   }
@@ -797,6 +904,12 @@ function showNextSlide(): void {
 
   if (appMode === "poster" && posterItems.length > 0) {
     showPoster((posterIndex + 1) % posterItems.length);
+    return;
+  }
+
+  if (appMode === "posters" && posterSlideshowItems.length > 0) {
+    posterSlideshowIndex = (posterSlideshowIndex + 1) % posterSlideshowItems.length;
+    void showSlide(posterSlideshowItems[posterSlideshowIndex]);
     return;
   }
 
@@ -850,6 +963,24 @@ function isSlideItem(value: unknown): value is SlideItem {
 function isLabFolder(value: unknown): value is LabFolder {
   const lab = value as Partial<LabFolder>;
   return Boolean(lab.name && lab.path);
+}
+
+function collectLabPosters(folders: LabFolder[]): SlideItem[] {
+  const items: SlideItem[] = [];
+  for (const folder of folders) {
+    items.push(...(folder.items || []).filter(isSlideItem));
+    items.push(...collectLabPosters((folder.children || []).filter(isLabFolder)));
+  }
+  return items;
+}
+
+function shuffleSlides(items: SlideItem[]): SlideItem[] {
+  const shuffled = [...items];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+  return shuffled;
 }
 
 function showStaticMessage(message: string): void {

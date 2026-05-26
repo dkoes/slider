@@ -23,7 +23,7 @@ Create a local `slider_config.json` next to `package.json`:
 cp slider_config.example.json slider_config.json
 ```
 
-Edit `slider_config.json` and set:
+Edit `slider_config.json`. The example file lists every supported setting and its default value. At minimum, set:
 
 ```json
 {
@@ -31,7 +31,9 @@ Edit `slider_config.json` and set:
 }
 ```
 
-`slider_config.json` is ignored by git so private or environment-specific folder URLs are not committed. You can also provide the URL with `--folder` or `SLIDER_FOLDER_URL`.
+`slider_config.json` is ignored by git so private or environment-specific folder URLs are not committed. Agent settings are read when the Python agent starts. App settings, such as `time_per_slide_seconds`, `poster_time_seconds`, `interactive_pause_seconds`, `four_up`, and `debug`, are embedded as defaults when you run `npm run build`; URL parameters still override them at runtime.
+
+You can also provide core agent settings with command-line flags or environment variables, such as `--folder` or `SLIDER_FOLDER_URL`.
 
 ## Run Locally
 
@@ -60,6 +62,12 @@ The slideshow pauses for touch/mouse interaction and shows navigation plus zoom 
 http://127.0.0.1:8788/slider.html?interactive_pause=180
 ```
 
+Announcement slides use `time` seconds per slide. Posters use `poster_time`; when it is not set, posters stay up for twice the announcement time.
+
+```text
+http://127.0.0.1:8788/slider.html?time=30&poster_time=90
+```
+
 To show four slides at once in equal quarters, add:
 
 ```text
@@ -71,6 +79,7 @@ In four-up mode, each advance shifts the visible slides forward by one quarter a
 If the shared folder contains a `Labs` folder, the agent recursively syncs its subfolders. During interactive mode, use the top-left menu to switch between:
 
 - `Announcements`: the default slideshow from the root folder
+- `Posters`: a randomized slideshow of all non-index PNG/PDF/HTML files under `Labs`
 - `Labs`: a hierarchical list of lab folders
 
 Each lab folder can include an `index.html` file plus PNG/PDF/HTML poster files. Selecting a lab shows `index.html` on the left two-thirds of the screen and a scrollable poster selector on the right. Selecting a poster opens it full-screen with the normal interactive navigation and zoom controls.
