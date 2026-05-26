@@ -4,6 +4,8 @@
   "port": 8788,
   "sync_interval_seconds": 120,
   "stale_after_seconds": 1800,
+  "autolaunch": true,
+  "chrome_path": "",
   "data_dir": "slider_data",
   "manifest_url": "/manifest.json",
   "time_per_slide_seconds": 30,

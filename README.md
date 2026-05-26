@@ -33,7 +33,7 @@ Edit `slider_config.json`. The example file lists every supported setting and it
 
 `slider_config.json` is ignored by git so private or environment-specific folder URLs are not committed. Agent settings are read when the Python agent starts. App settings, such as `time_per_slide_seconds`, `poster_time_seconds`, `interactive_pause_seconds`, `four_up`, `pan_posters`, `pan_fraction`, `pdf_cache_size`, and `debug`, are embedded as defaults when you run `npm run build`; URL parameters still override them at runtime.
 
-You can also provide core agent settings with command-line flags or environment variables, such as `--folder` or `SLIDER_FOLDER_URL`.
+You can also provide core agent settings with command-line flags or environment variables, such as `--folder` or `SLIDER_FOLDER_URL`. On Windows, the agent launches Chrome in kiosk mode by default after the server starts. Set `chrome_path` or `SLIDER_CHROME_PATH` to use a specific Chrome executable, or disable it with `autolaunch: false` or `--no-autolaunch`.
 
 ## Run Locally
 
@@ -52,6 +52,7 @@ Useful options:
 ```sh
 python3 build/slider_agent.py --folder "https://your-tenant.sharepoint.com/:f:/s/..." --port 8788 --sync-interval 300
 python3 build/slider_agent.py --once --data-dir ./slider_data
+python3 build/slider_agent.py --no-autolaunch
 ```
 
 The agent keeps the last successfully synced slides if SharePoint becomes unreachable. The manifest records sync health, and the slideshow displays a banner when sync fails or becomes stale.

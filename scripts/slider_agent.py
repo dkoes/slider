@@ -12,6 +12,7 @@ import os
 import posixpath
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -49,6 +50,8 @@ class AgentConfig:
     data_dir: Path
     sync_interval_seconds: int
     stale_after_seconds: int
+    autolaunch: bool
+    chrome_path: str
     once: bool
 
     @property
@@ -81,6 +84,7 @@ def main() -> int:
     server = ThreadingHTTPServer((config.host, config.port), make_handler(config))
     print(f"Slider agent serving http://{config.host}:{config.port}/slider.html")
     print(f"Syncing {config.folder_url}")
+    launch_windows_chrome_kiosk(config)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -102,6 +106,9 @@ def parse_args() -> AgentConfig:
     parser.add_argument("--data-dir", type=Path, default=Path(get_config_value(local_config, "data_dir", "SLIDER_DATA_DIR", default_data_dir)))
     parser.add_argument("--sync-interval", type=int, default=int(get_config_value(local_config, "sync_interval_seconds", "SLIDER_SYNC_INTERVAL_SECONDS", DEFAULT_SYNC_INTERVAL_SECONDS)))
     parser.add_argument("--stale-after", type=int, default=int(get_config_value(local_config, "stale_after_seconds", "SLIDER_STALE_AFTER_SECONDS", DEFAULT_STALE_AFTER_SECONDS)))
+    parser.add_argument("--autolaunch", action=argparse.BooleanOptionalAction, default=get_autolaunch_config(local_config), help="On Windows, launch Chrome in kiosk mode after the server starts.")
+    parser.add_argument("--launch-chrome-kiosk", dest="autolaunch", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    parser.add_argument("--chrome-path", default=get_config_value(local_config, "chrome_path", "SLIDER_CHROME_PATH", ""))
     parser.add_argument("--once", action="store_true", help="Run one sync and exit.")
     args = parser.parse_args()
 
@@ -113,6 +120,8 @@ def parse_args() -> AgentConfig:
         data_dir=args.data_dir.resolve(),
         sync_interval_seconds=max(10, args.sync_interval),
         stale_after_seconds=max(30, args.stale_after),
+        autolaunch=args.autolaunch,
+        chrome_path=args.chrome_path,
         once=args.once,
     )
 
@@ -126,6 +135,92 @@ def get_config_value(config: dict[str, Any], key: str, env_name: str, fallback: 
         return str(value)
 
     return str(fallback)
+
+
+def get_config_bool(config: dict[str, Any], key: str, env_name: str, fallback: bool) -> bool:
+    value = os.environ.get(env_name)
+    if value in (None, ""):
+        value = config.get(key)
+
+    if value in (None, ""):
+        return fallback
+
+    if isinstance(value, bool):
+        return value
+
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_autolaunch_config(config: dict[str, Any]) -> bool:
+    if os.environ.get("SLIDER_AUTOLAUNCH") not in (None, ""):
+        return parse_bool(os.environ["SLIDER_AUTOLAUNCH"])
+
+    if config.get("autolaunch") not in (None, ""):
+        return parse_bool(config["autolaunch"])
+
+    return get_config_bool(config, "launch_chrome_kiosk", "SLIDER_LAUNCH_CHROME_KIOSK", True)
+
+
+def parse_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def launch_windows_chrome_kiosk(config: AgentConfig) -> None:
+    if sys.platform != "win32" or not config.autolaunch:
+        return
+
+    chrome_path = find_windows_chrome_path(config.chrome_path)
+    if not chrome_path:
+        print("Chrome kiosk launch skipped: chrome.exe was not found.", file=sys.stderr)
+        return
+
+    url = get_slider_url(config)
+    try:
+        subprocess.Popen(
+            [
+                chrome_path,
+                "--kiosk",
+                "--new-window",
+                url,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        print(f"Launched Chrome kiosk at {url}")
+    except OSError as error:
+        print(f"Chrome kiosk launch failed: {error}", file=sys.stderr)
+
+
+def find_windows_chrome_path(configured_path: str) -> str:
+    candidates = []
+    if configured_path:
+        candidates.append(configured_path)
+
+    candidates.extend(
+        [
+            str(Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Google" / "Chrome" / "Application" / "chrome.exe"),
+            str(Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")) / "Google" / "Chrome" / "Application" / "chrome.exe"),
+            str(Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "Application" / "chrome.exe"),
+        ]
+    )
+
+    which_chrome = shutil.which("chrome") or shutil.which("chrome.exe")
+    if which_chrome:
+        candidates.append(which_chrome)
+
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return candidate
+
+    return ""
+
+
+def get_slider_url(config: AgentConfig) -> str:
+    host = "127.0.0.1" if config.host in {"0.0.0.0", "::"} else config.host
+    return f"http://{host}:{config.port}/slider.html"
 
 
 def sync_loop(syncer: "SharePointSyncer", interval_seconds: int) -> None:
