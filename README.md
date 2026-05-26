@@ -31,7 +31,7 @@ Edit `slider_config.json`. The example file lists every supported setting and it
 }
 ```
 
-`slider_config.json` is ignored by git so private or environment-specific folder URLs are not committed. Agent settings are read when the Python agent starts. App settings, such as `time_per_slide_seconds`, `poster_time_seconds`, `interactive_pause_seconds`, `four_up`, `pan_posters`, `pdf_cache_size`, and `debug`, are embedded as defaults when you run `npm run build`; URL parameters still override them at runtime.
+`slider_config.json` is ignored by git so private or environment-specific folder URLs are not committed. Agent settings are read when the Python agent starts. App settings, such as `time_per_slide_seconds`, `poster_time_seconds`, `interactive_pause_seconds`, `four_up`, `pan_posters`, `pan_fraction`, `pdf_cache_size`, and `debug`, are embedded as defaults when you run `npm run build`; URL parameters still override them at runtime.
 
 You can also provide core agent settings with command-line flags or environment variables, such as `--folder` or `SLIDER_FOLDER_URL`.
 
@@ -72,6 +72,12 @@ Poster panning is enabled by default. Disable it with:
 
 ```text
 http://127.0.0.1:8788/slider.html?pan_posters=0
+```
+
+Posters only pan when less than `pan_fraction` of the full-width content height would be visible; the default is `0.85`.
+
+```text
+http://127.0.0.1:8788/slider.html?pan_fraction=0.75
 ```
 
 To show four slides at once in equal quarters, add:

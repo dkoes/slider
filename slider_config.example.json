@@ -12,6 +12,7 @@
   "live_stream_minutes": 30,
   "four_up": false,
   "pan_posters": true,
+  "pan_fraction": 0.75,
   "pdf_cache_size": 200,
   "debug": false
 }

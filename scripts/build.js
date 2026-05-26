@@ -101,6 +101,7 @@ function getSliderDefaults(config) {
     liveStreamMinutes: positiveNumber(config.live_stream_minutes, 30),
     fourUp: booleanValue(firstDefined(config.four_up, config.four), false),
     panPosters: booleanValue(config.pan_posters, true),
+    panFraction: fractionValue(config.pan_fraction, 0.85),
     pdfCacheSize: positiveNumber(firstDefined(config.pdf_cache_size, config.pdf_cache), 200),
     debug: booleanValue(config.debug, false)
   };
@@ -117,6 +118,7 @@ function formatSliderDefaults(defaults) {
     ["SLIDER_LIVE_STREAM_MINUTES", defaults.liveStreamMinutes],
     ["SLIDER_FOUR_UP", defaults.fourUp],
     ["SLIDER_PAN_POSTERS", defaults.panPosters],
+    ["SLIDER_PAN_FRACTION", defaults.panFraction],
     ["SLIDER_PDF_CACHE_SIZE", defaults.pdfCacheSize],
     ["SLIDER_DEBUG", defaults.debug]
   ];
@@ -143,6 +145,11 @@ function stringValue(value, fallback) {
 function positiveNumber(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function fractionValue(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 && number <= 1 ? number : fallback;
 }
 
 function booleanValue(value, fallback) {

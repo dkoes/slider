@@ -13,6 +13,7 @@ interface SliderGlobals {
   SLIDER_LIVE_STREAM_MINUTES?: number;
   SLIDER_FOUR_UP?: boolean;
   SLIDER_PAN_POSTERS?: boolean;
+  SLIDER_PAN_FRACTION?: number;
   SLIDER_PDF_CACHE_SIZE?: number;
   SLIDER_DEBUG?: boolean;
   SLIDER_PDF_WORKER_SOURCE?: string;
@@ -28,6 +29,7 @@ interface PdfJsGlobal {
 }
 
 interface PdfDocumentProxy {
+  numPages: number;
   getPage(pageNumber: number): Promise<PdfPageProxy>;
 }
 
@@ -84,6 +86,7 @@ interface SliderConfig {
   liveStreamMinutes: number;
   fourUp: boolean;
   panPosters: boolean;
+  panFraction: number;
   pdfCacheSize: number;
   debug: boolean;
 }
@@ -307,6 +310,8 @@ function getConfig(): SliderConfig {
   const parsedPdfCacheSize = rawPdfCacheSize ? Number(rawPdfCacheSize) : Number(globals.SLIDER_PDF_CACHE_SIZE);
   const fourUp = parseBooleanParam(params.get("four_up"), Boolean(globals.SLIDER_FOUR_UP));
   const panPosters = parseBooleanParam(params.get("pan_posters"), globals.SLIDER_PAN_POSTERS ?? true);
+  const rawPanFraction = params.get("pan_fraction");
+  const parsedPanFraction = rawPanFraction ? Number(rawPanFraction) : Number(globals.SLIDER_PAN_FRACTION);
 
   return {
     manifestUrl,
@@ -319,6 +324,7 @@ function getConfig(): SliderConfig {
     liveStreamMinutes: Number.isFinite(parsedLiveStreamMinutes) && parsedLiveStreamMinutes > 0 ? parsedLiveStreamMinutes : 30,
     fourUp,
     panPosters,
+    panFraction: Number.isFinite(parsedPanFraction) && parsedPanFraction > 0 && parsedPanFraction <= 1 ? parsedPanFraction : 0.85,
     pdfCacheSize: Number.isFinite(parsedPdfCacheSize) && parsedPdfCacheSize >= 0 ? Math.floor(parsedPdfCacheSize) : 200,
     debug: parseBooleanParam(params.get("debug"), Boolean(globals.SLIDER_DEBUG))
   };
@@ -993,6 +999,11 @@ async function getRenderedPdfPage(slide: SlideItem, viewportSize: { width: numbe
   };
   pdfRenderCache.set(key, entry);
   trimPdfRenderCache();
+  void entry.promise.then((rendered) => {
+    if (pdfRenderCache.get(key) === entry) {
+      logDebugCacheAddition("pdf-render", key, pdfRenderCache.size, getRenderedPdfPageDebugDetails(rendered));
+    }
+  }).catch(() => undefined);
   entry.promise.catch(() => {
     if (pdfRenderCache.get(key) === entry) {
       pdfRenderCache.delete(key);
@@ -1051,6 +1062,14 @@ function getPdfDocument(slide: SlideItem): Promise<PdfDocumentProxy> {
   const promise = pdfjsLib!.getDocument(slide.url).promise;
   pdfDocumentCache.set(key, promise);
   trimPdfDocumentCache();
+  void promise.then((documentProxy) => {
+    if (pdfDocumentCache.get(key) === promise) {
+      logDebugCacheAddition("pdf-document", key, pdfDocumentCache.size, {
+        pages: documentProxy.numPages,
+        size: "unknown"
+      });
+    }
+  }).catch(() => undefined);
   promise.catch(() => {
     if (pdfDocumentCache.get(key) === promise) {
       pdfDocumentCache.delete(key);
@@ -1098,6 +1117,46 @@ function trimPdfDocumentCache(): void {
     }
     pdfDocumentCache.delete(oldestKey);
   }
+}
+
+function getRenderedPdfPageDebugDetails(rendered: PdfRenderResult): Record<string, string | number> {
+  const estimatedBytes = rendered.canvas.width * rendered.canvas.height * 4;
+  return {
+    canvasPixels: `${rendered.canvas.width}x${rendered.canvas.height}`,
+    cssPixels: `${Math.round(rendered.renderWidth)}x${Math.round(rendered.renderHeight)}`,
+    estimatedBytes,
+    estimatedSize: formatBytes(estimatedBytes)
+  };
+}
+
+function logDebugCacheAddition(
+  cacheName: string,
+  key: string,
+  entries: number,
+  details: Record<string, string | number>
+): void {
+  if (!config.debug) {
+    return;
+  }
+
+  console.log(`[slider cache] added ${cacheName}`, {
+    key,
+    entries,
+    ...details
+  });
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  const kib = bytes / 1024;
+  if (kib < 1024) {
+    return `${kib.toFixed(1)} KiB`;
+  }
+
+  return `${(kib / 1024).toFixed(1)} MiB`;
 }
 
 function preloadUpcomingPdfs(): void {
@@ -1219,10 +1278,12 @@ function updatePosterPanState(viewport: HTMLElement, media: HTMLElement, mediaHe
   // Pan exactly the overflow. Short content keeps the centered fit layout, while
   // tall posters stop with their bottom edge aligned to the viewport bottom.
   const distance = Math.max(0, mediaHeight - window.innerHeight);
+  const visibleFraction = mediaHeight > 0 ? Math.min(1, window.innerHeight / mediaHeight) : 1;
+  const shouldPan = distance > 1 && visibleFraction < config.panFraction;
   viewport.style.setProperty("--poster-pan-media-height", `${mediaHeight}px`);
   viewport.style.setProperty("--poster-pan-distance", `${distance}px`);
-  viewport.dataset.panReady = distance > 1 ? "true" : "false";
-  media.classList.toggle("poster-pan-media", distance > 1);
+  viewport.dataset.panReady = shouldPan ? "true" : "false";
+  media.classList.toggle("poster-pan-media", shouldPan);
 }
 
 function isPosterDisplayMode(): boolean {
@@ -1508,8 +1569,18 @@ function rewindFourSlides(): void {
 }
 
 async function waitForAdvance(durationMs: number): Promise<void> {
-  const end = Date.now() + durationMs;
+  let waitMode = appMode;
+  let end = Date.now() + durationMs;
   while (running) {
+    if (appMode !== waitMode) {
+      if (appMode === "lab" || appMode === "poster" || isLiveStreamMode(appMode)) {
+        return;
+      }
+
+      waitMode = appMode;
+      end = Date.now() + getAutoplayDelaySeconds() * 1000;
+    }
+
     const remaining = Math.max(end - Date.now(), interactivePauseUntil - Date.now());
     if (remaining <= 0) {
       document.body.classList.remove("interactive");
