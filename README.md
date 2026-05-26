@@ -68,6 +68,13 @@ http://127.0.0.1:8788/slider.html?four=1
 
 In four-up mode, each advance shifts the visible slides forward by one quarter and introduces one new slide.
 
+If the shared folder contains a `Labs` folder, the agent recursively syncs its subfolders. During interactive mode, use the top-left menu to switch between:
+
+- `Announcements`: the default slideshow from the root folder
+- `Labs`: a hierarchical list of lab folders
+
+Each lab folder can include an `index.html` file plus PNG/PDF/HTML poster files. Selecting a lab shows `index.html` on the left two-thirds of the screen and a scrollable poster selector on the right. Selecting a poster opens it full-screen with the normal interactive navigation and zoom controls.
+
 ## Development
 
 For autorebuild and agent restart while editing TypeScript, CSS, HTML, or Python:

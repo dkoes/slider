@@ -20,6 +20,14 @@ __INLINE_CSS__
   <body>
     <main id="slider-root" aria-live="polite">
       <section id="stage" aria-label="Slideshow stage"></section>
+      <button id="menu-toggle" class="menu-toggle" type="button" aria-label="Open menu">☰</button>
+      <nav id="menu-panel" class="menu-panel" aria-label="Slideshow menu">
+        <button id="menu-announcements" class="menu-item" type="button">Announcements</button>
+        <div class="menu-section">
+          <button class="menu-item menu-parent" type="button">Labs</button>
+          <div id="labs-menu" class="labs-menu"></div>
+        </div>
+      </nav>
       <button id="previous-slide" class="nav-control nav-control-left" type="button" aria-label="Previous slide">&lsaquo;</button>
       <button id="next-slide" class="nav-control nav-control-right" type="button" aria-label="Next slide">&rsaquo;</button>
       <div id="zoom-controls" aria-label="Zoom controls">

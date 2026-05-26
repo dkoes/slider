@@ -56,6 +56,10 @@ class AgentConfig:
         return self.data_dir / "slides"
 
     @property
+    def labs_dir(self) -> Path:
+        return self.data_dir / "labs"
+
+    @property
     def manifest_path(self) -> Path:
         return self.data_dir / "manifest.json"
 
@@ -64,6 +68,7 @@ def main() -> int:
     config = parse_args()
     config.data_dir.mkdir(parents=True, exist_ok=True)
     config.slides_dir.mkdir(parents=True, exist_ok=True)
+    config.labs_dir.mkdir(parents=True, exist_ok=True)
 
     syncer = SharePointSyncer(config)
     if config.once:
@@ -139,8 +144,10 @@ class SharePointSyncer:
         with self.lock:
             attempt = utc_now()
             try:
-                slides = self.fetch_slides()
-                self.remove_unlisted_files(slides)
+                content = self.fetch_content()
+                slides = content["slides"]
+                labs = content["labs"]
+                self.remove_unlisted_files(slides, labs)
                 manifest = {
                     "generatedAt": attempt,
                     "source": self.config.folder_url,
@@ -152,14 +159,15 @@ class SharePointSyncer:
                         "staleAfterSeconds": self.config.stale_after_seconds,
                     },
                     "slides": slides,
+                    "labs": labs,
                 }
                 write_json_atomic(self.config.manifest_path, manifest)
-                print(f"{attempt} synced {len(slides)} slides.")
+                print(f"{attempt} synced {len(slides)} announcement slides and {count_lab_items(labs)} lab files.")
             except Exception as error:  # noqa: BLE001 - keep the display alive on every sync failure.
                 self.write_failure_manifest(attempt, str(error))
                 print(f"{attempt} sync failed: {error}", file=sys.stderr)
 
-    def fetch_slides(self) -> list[dict[str, str]]:
+    def fetch_content(self) -> dict[str, list[dict[str, Any]]]:
         if not self.config.folder_url:
             raise RuntimeError(
                 "No SharePoint folder URL is configured. Set --folder, SLIDER_FOLDER_URL, or folder_url in slider_config.json."
@@ -177,24 +185,98 @@ class SharePointSyncer:
         )
         drive_relative_path = get_drive_relative_path(server_relative_path, page_context.get("listUrl", ""))
         children_url = make_children_url(drive_url, access_token, drive_relative_path)
-        payload = self.fetch_json(children_url)
-        children = payload.get("value")
-        if not isinstance(children, list):
-            raise RuntimeError("SharePoint children response did not contain a value list.")
+        children = self.fetch_all_children(children_url)
 
         slides: list[dict[str, str]] = []
         used_names: set[str] = set()
+        labs: list[dict[str, Any]] = []
         for child in children:
-            if not isinstance(child, dict) or "file" not in child:
+            if not isinstance(child, dict):
                 continue
 
-            slide = self.sync_child(child, used_names)
-            if slide:
-                slides.append(slide)
+            if "file" in child:
+                slide = self.sync_child(child, self.config.slides_dir, "/slides", used_names)
+                if slide:
+                    slides.append(slide)
+            elif "folder" in child and str(child.get("name") or "").lower() == "labs":
+                labs = self.sync_labs_root(child, drive_url, access_token)
 
-        return sorted(slides, key=lambda slide: slide["name"].lower())
+        return {
+            "slides": sorted(slides, key=lambda slide: slide["name"].lower()),
+            "labs": labs,
+        }
 
-    def sync_child(self, child: dict[str, Any], used_names: set[str]) -> dict[str, str] | None:
+    def sync_labs_root(self, labs_child: dict[str, Any], drive_url: str, access_token: str) -> list[dict[str, Any]]:
+        children = self.fetch_folder_children(drive_url, access_token, str(labs_child.get("id") or ""))
+        labs: list[dict[str, Any]] = []
+        for child in children:
+            if isinstance(child, dict) and "folder" in child:
+                labs.append(self.sync_lab_folder(child, drive_url, access_token, []))
+        return sorted(labs, key=lambda lab: lab["name"].lower())
+
+    def sync_lab_folder(
+        self,
+        folder: dict[str, Any],
+        drive_url: str,
+        access_token: str,
+        parent_parts: list[str],
+    ) -> dict[str, Any]:
+        name = str(folder.get("name") or "Lab")
+        safe_name = safe_filename(name)
+        path_parts = parent_parts + [safe_name]
+        lab_dir = self.config.labs_dir.joinpath(*path_parts)
+        lab_url_prefix = "/" + "/".join(["labs", *[urllib.parse.quote(part) for part in path_parts]])
+        children = self.fetch_folder_children(drive_url, access_token, str(folder.get("id") or ""))
+        files: list[dict[str, str]] = []
+        subfolders: list[dict[str, Any]] = []
+        used_names: set[str] = set()
+
+        for child in children:
+            if not isinstance(child, dict):
+                continue
+            if "file" in child:
+                item = self.sync_child(child, lab_dir, lab_url_prefix, used_names)
+                if item:
+                    files.append(item)
+            elif "folder" in child:
+                subfolders.append(self.sync_lab_folder(child, drive_url, access_token, path_parts))
+
+        index_item = next((item for item in files if item["name"].lower() in ("index.html", "index.htm")), None)
+        poster_items = [item for item in files if item is not index_item]
+        return {
+            "id": str(folder.get("id") or "/".join(path_parts)),
+            "name": name,
+            "path": "/".join(path_parts),
+            "index": index_item,
+            "items": sorted(poster_items, key=lambda item: item["name"].lower()),
+            "children": sorted(subfolders, key=lambda lab: lab["name"].lower()),
+        }
+
+    def fetch_folder_children(self, drive_url: str, access_token: str, item_id: str) -> list[dict[str, Any]]:
+        if not item_id:
+            return []
+        return self.fetch_all_children(make_item_children_url(drive_url, access_token, item_id))
+
+    def fetch_all_children(self, url: str) -> list[dict[str, Any]]:
+        children: list[dict[str, Any]] = []
+        next_url = url
+        while next_url:
+            payload = self.fetch_json(next_url)
+            value = payload.get("value")
+            if not isinstance(value, list):
+                raise RuntimeError("SharePoint children response did not contain a value list.")
+            children.extend(child for child in value if isinstance(child, dict))
+            next_link = payload.get("@odata.nextLink")
+            next_url = next_link if isinstance(next_link, str) else ""
+        return children
+
+    def sync_child(
+        self,
+        child: dict[str, Any],
+        directory: Path,
+        url_prefix: str,
+        used_names: set[str],
+    ) -> dict[str, str] | None:
         name = str(child.get("name") or "")
         extension = Path(name).suffix.lower()
         kind = SUPPORTED_EXTENSIONS.get(extension)
@@ -203,7 +285,7 @@ class SharePointSyncer:
             return None
 
         local_name = unique_name(safe_filename(name), used_names)
-        local_path = self.config.slides_dir / local_name
+        local_path = directory / local_name
         modified = str(child.get("lastModifiedDateTime") or child.get("cTag") or child.get("eTag") or "")
         existing = find_existing_slide(self.config.manifest_path, str(child.get("id") or name))
         if (
@@ -216,7 +298,7 @@ class SharePointSyncer:
                 "id": str(child.get("id") or name),
                 "name": name,
                 "kind": kind,
-                "url": existing["url"],
+                "url": str(existing["url"]),
                 "modified": modified,
             }
 
@@ -225,16 +307,23 @@ class SharePointSyncer:
             "id": str(child.get("id") or name),
             "name": name,
             "kind": kind,
-            "url": f"/slides/{urllib.parse.quote(local_name)}",
+            "url": f"{url_prefix}/{urllib.parse.quote(local_name)}",
             "modified": modified,
         }
 
-    def remove_unlisted_files(self, slides: list[dict[str, str]]) -> None:
-        wanted = {urllib.parse.unquote(Path(slide["url"]).name) for slide in slides}
-        for path in self.config.slides_dir.iterdir():
-            if path.is_file() and path.name not in wanted:
-                with contextlib.suppress(OSError):
-                    path.unlink()
+    def remove_unlisted_files(self, slides: list[dict[str, str]], labs: list[dict[str, Any]]) -> None:
+        wanted = {self.local_path_from_url(slide["url"]) for slide in slides}
+        wanted.update(self.local_path_from_url(url) for url in collect_lab_urls(labs))
+        for root in (self.config.slides_dir, self.config.labs_dir):
+            if not root.exists():
+                continue
+            for path in root.rglob("*"):
+                if path.is_file() and path not in wanted:
+                    with contextlib.suppress(OSError):
+                        path.unlink()
+
+    def local_path_from_url(self, url: str) -> Path:
+        return self.config.data_dir / urllib.parse.unquote(url.lstrip("/"))
 
     def write_failure_manifest(self, attempt: str, error: str) -> None:
         manifest = read_json(self.config.manifest_path) or {}
@@ -249,6 +338,7 @@ class SharePointSyncer:
             "staleAfterSeconds": self.config.stale_after_seconds,
         }
         manifest["slides"] = manifest.get("slides") if isinstance(manifest.get("slides"), list) else []
+        manifest["labs"] = manifest.get("labs") if isinstance(manifest.get("labs"), list) else []
         write_json_atomic(self.config.manifest_path, manifest)
 
     def fetch_text(self, url: str) -> "TextResponse":
@@ -405,6 +495,12 @@ def make_children_url(drive_url: str, access_token: str, drive_relative_path: st
     return f"{base_url}{separator}{access_token.lstrip('?')}"
 
 
+def make_item_children_url(drive_url: str, access_token: str, item_id: str) -> str:
+    base_url = f"{drive_url}/items/{urllib.parse.quote(item_id, safe='')}/children"
+    separator = "&" if "?" in base_url else "?"
+    return f"{base_url}{separator}{access_token.lstrip('?')}"
+
+
 def safe_filename(name: str) -> str:
     cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip().strip(".")
     return cleaned or "slide"
@@ -424,13 +520,51 @@ def unique_name(name: str, used_names: set[str]) -> str:
 
 def find_existing_slide(manifest_path: Path, slide_id: str) -> dict[str, Any] | None:
     manifest = read_json(manifest_path)
-    slides = manifest.get("slides") if isinstance(manifest, dict) else None
-    if not isinstance(slides, list):
-        return None
-    for slide in slides:
+    for slide in iter_manifest_items(manifest):
         if isinstance(slide, dict) and slide.get("id") == slide_id:
             return slide
     return None
+
+
+def iter_manifest_items(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    slides = manifest.get("slides")
+    if isinstance(slides, list):
+        items.extend(item for item in slides if isinstance(item, dict))
+
+    labs = manifest.get("labs")
+    if isinstance(labs, list):
+        for lab in labs:
+            collect_lab_items(lab, items)
+    return items
+
+
+def collect_lab_items(lab: Any, items: list[dict[str, Any]]) -> None:
+    if not isinstance(lab, dict):
+        return
+    index = lab.get("index")
+    if isinstance(index, dict):
+        items.append(index)
+    lab_items = lab.get("items")
+    if isinstance(lab_items, list):
+        items.extend(item for item in lab_items if isinstance(item, dict))
+    children = lab.get("children")
+    if isinstance(children, list):
+        for child in children:
+            collect_lab_items(child, items)
+
+
+def collect_lab_urls(labs: list[dict[str, Any]]) -> list[str]:
+    urls: list[str] = []
+    for item in iter_manifest_items({"labs": labs}):
+        url = item.get("url")
+        if isinstance(url, str):
+            urls.append(url)
+    return urls
+
+
+def count_lab_items(labs: list[dict[str, Any]]) -> int:
+    return len(collect_lab_urls(labs))
 
 
 def download_atomic(opener: urllib.request.OpenerDirector, url: str, target: Path) -> None:
@@ -508,6 +642,8 @@ def make_handler(config: AgentConfig) -> type[SimpleHTTPRequestHandler]:
             if clean_path == "manifest.json":
                 return str(config.manifest_path)
             if clean_path == "slides" or clean_path.startswith("slides/"):
+                return str(safe_join(config.data_dir, clean_path))
+            if clean_path == "labs" or clean_path.startswith("labs/"):
                 return str(safe_join(config.data_dir, clean_path))
             return str(safe_join(config.web_root, clean_path))
 

@@ -1,5 +1,6 @@
 type SlideKind = "image" | "pdf" | "html";
 type SyncStatus = "ok" | "syncing" | "error";
+type AppMode = "announcements" | "lab" | "poster";
 
 interface SliderGlobals {
   SLIDER_MANIFEST_URL?: string;
@@ -30,6 +31,16 @@ interface SlideManifest {
   generatedAt?: string;
   sync?: SyncState;
   slides?: SlideItem[];
+  labs?: LabFolder[];
+}
+
+interface LabFolder {
+  id?: string;
+  name: string;
+  path: string;
+  index?: SlideItem;
+  items?: SlideItem[];
+  children?: LabFolder[];
 }
 
 interface SliderConfig {
@@ -56,13 +67,19 @@ interface PointerState {
 const stage = mustGetElement("stage");
 const statusNode = mustGetElement("status");
 const banner = mustGetElement("banner");
+const menuToggle = mustGetElement("menu-toggle") as HTMLButtonElement;
+const menuPanel = mustGetElement("menu-panel");
+const announcementsButton = mustGetElement("menu-announcements") as HTMLButtonElement;
+const labsMenu = mustGetElement("labs-menu");
 const previousButton = mustGetElement("previous-slide") as HTMLButtonElement;
 const nextButton = mustGetElement("next-slide") as HTMLButtonElement;
 const zoomInButton = mustGetElement("zoom-in") as HTMLButtonElement;
 const zoomOutButton = mustGetElement("zoom-out") as HTMLButtonElement;
 
 let slides: SlideItem[] = [];
+let labs: LabFolder[] = [];
 let slideIndex = -1;
+let appMode: AppMode = "announcements";
 let activeSlide: HTMLElement | null = null;
 let activeFourSlides: HTMLElement[] = [];
 let activeFourIndices: number[] = [];
@@ -76,6 +93,8 @@ let gestureStartDistance = 0;
 let gestureStartCenter: { x: number; y: number } | null = null;
 let interactivePauseUntil = 0;
 let controlsHideTimer = 0;
+let posterItems: SlideItem[] = [];
+let posterIndex = -1;
 let cycleNeedsRefresh = true;
 let running = false;
 let config: SliderConfig;
@@ -103,6 +122,11 @@ async function start(): Promise<void> {
       cycleNeedsRefresh = false;
     }
 
+    if (appMode !== "announcements") {
+      await sleep(500);
+      continue;
+    }
+
     if (config.fourUp) {
       await advanceFourSlides();
     } else {
@@ -119,6 +143,14 @@ async function start(): Promise<void> {
 }
 
 function wireControls(): void {
+  menuToggle.addEventListener("click", (event) => {
+    pauseForInteraction();
+    menuPanel.classList.toggle("open");
+    event.stopPropagation();
+  });
+  menuPanel.addEventListener("pointerdown", (event) => event.stopPropagation());
+  menuPanel.addEventListener("click", (event) => event.stopPropagation());
+  announcementsButton.addEventListener("click", () => showAnnouncements());
   previousButton.addEventListener("click", () => showPreviousSlide());
   nextButton.addEventListener("click", () => showNextSlide());
   zoomInButton.addEventListener("click", () => {
@@ -140,6 +172,11 @@ function wireControls(): void {
     } else if (event.key === "-" || event.key === "_") {
       pauseForInteraction();
       zoomAt(0.8);
+    }
+  });
+  document.addEventListener("pointerdown", () => {
+    if (menuPanel.classList.contains("open")) {
+      menuPanel.classList.remove("open");
     }
   });
 }
@@ -172,6 +209,8 @@ async function refreshSlides(config: SliderConfig): Promise<void> {
   try {
     const manifest = await fetchManifest(config.manifestUrl);
     const nextSlides = (manifest.slides || []).filter(isSlideItem);
+    labs = (manifest.labs || []).filter(isLabFolder);
+    renderMenu();
     const slideCountChanged = slides.length !== nextSlides.length;
     slides = nextSlides;
     slideIndex = normalizeSlideIndex(slideIndex, slides.length);
@@ -250,6 +289,9 @@ function formatAge(ageSeconds: number): string {
 }
 
 async function showSlide(slide: SlideItem): Promise<void> {
+  if (appMode === "announcements" || appMode === "poster") {
+    stage.querySelectorAll(".lab-view").forEach((node) => node.remove());
+  }
   activeFourSlides.forEach((node) => node.remove());
   activeFourSlides = [];
 
@@ -272,6 +314,138 @@ async function showSlide(slide: SlideItem): Promise<void> {
   window.setTimeout(() => {
     previous?.remove();
   }, 700);
+}
+
+function renderMenu(): void {
+  labsMenu.replaceChildren();
+  if (labs.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "menu-empty";
+    empty.textContent = "No labs available";
+    labsMenu.append(empty);
+    return;
+  }
+
+  labsMenu.append(createLabMenuList(labs));
+}
+
+function createLabMenuList(items: LabFolder[]): HTMLElement {
+  const list = document.createElement("ul");
+  list.className = "lab-menu-list";
+  for (const lab of items) {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.className = "menu-item lab-menu-item";
+    button.type = "button";
+    button.textContent = lab.name;
+    button.addEventListener("click", () => showLab(lab));
+    item.append(button);
+    if (lab.children?.length) {
+      item.append(createLabMenuList(lab.children));
+    }
+    list.append(item);
+  }
+  return list;
+}
+
+function showAnnouncements(): void {
+  setAppMode("announcements");
+  posterItems = [];
+  posterIndex = -1;
+  menuPanel.classList.remove("open");
+  pauseForInteraction();
+  stage.querySelectorAll(".lab-view").forEach((node) => node.remove());
+  activeFourSlides.forEach((node) => node.remove());
+  activeFourSlides = [];
+  activeFourIndices = [];
+  activeSlide?.remove();
+  activeSlide = null;
+  if (slides.length > 0) {
+    slideIndex = normalizeSlideIndex(slideIndex, slides.length);
+    void showSlide(slides[(slideIndex + 1) % slides.length]);
+  }
+}
+
+function showLab(lab: LabFolder): void {
+  setAppMode("lab");
+  posterItems = (lab.items || []).filter(isSlideItem);
+  posterIndex = -1;
+  menuPanel.classList.remove("open");
+  pauseForInteraction();
+  activeSlide?.remove();
+  activeSlide = null;
+  activeFourSlides.forEach((node) => node.remove());
+  activeFourSlides = [];
+  stage.querySelectorAll(".slide, .lab-view").forEach((node) => node.remove());
+
+  const view = document.createElement("article");
+  view.className = "lab-view active";
+  view.setAttribute("aria-label", lab.name);
+
+  const indexPane = document.createElement("section");
+  indexPane.className = "lab-index";
+  if (lab.index) {
+    const frame = document.createElement("iframe");
+    frame.src = lab.index.url;
+    frame.title = lab.index.name;
+    frame.sandbox.add("allow-scripts", "allow-same-origin", "allow-forms", "allow-popups");
+    indexPane.append(frame);
+  } else {
+    const message = document.createElement("div");
+    message.className = "message";
+    message.textContent = `${lab.name} does not have an index.html file.`;
+    indexPane.append(message);
+  }
+
+  const selector = document.createElement("aside");
+  selector.className = "poster-selector";
+  for (const item of posterItems) {
+    selector.append(createPosterSelectorButton(item, posterItems.indexOf(item)));
+  }
+
+  view.append(indexPane, selector);
+  stage.append(view);
+  activeSlide = view;
+  activeTransformTarget = null;
+  showDebugTitle(lab.name);
+}
+
+function createPosterSelectorButton(item: SlideItem, index: number): HTMLElement {
+  const button = document.createElement("button");
+  button.className = "poster-option";
+  button.type = "button";
+  button.addEventListener("click", () => showPoster(index));
+
+  const preview = document.createElement("div");
+  preview.className = "poster-preview";
+  if (item.kind === "image") {
+    const image = document.createElement("img");
+    image.src = item.url;
+    image.alt = "";
+    preview.append(image);
+  } else {
+    const frame = document.createElement("iframe");
+    frame.src = item.kind === "pdf" ? `${item.url}#toolbar=0&navpanes=0&scrollbar=0&view=Fit` : item.url;
+    frame.title = item.name;
+    preview.append(frame);
+  }
+
+  const label = document.createElement("span");
+  label.textContent = item.name;
+  button.append(preview, label);
+  return button;
+}
+
+function showPoster(index: number): void {
+  const item = posterItems[index];
+  if (!item) {
+    return;
+  }
+
+  setAppMode("poster");
+  posterIndex = index;
+  pauseForInteraction();
+  void showSlide(item);
 }
 
 async function advanceFourSlides(): Promise<void> {
@@ -503,6 +677,11 @@ function showControls(): void {
   }, config.interactivePauseSeconds * 1000 + 150);
 }
 
+function setAppMode(mode: AppMode): void {
+  appMode = mode;
+  document.body.classList.toggle("lab-mode", mode === "lab");
+}
+
 function resetTransform(): void {
   activePointers = new Map();
   gestureStartTransform = null;
@@ -588,11 +767,20 @@ function setDefaultFourUpTransformTarget(): void {
 }
 
 function showPreviousSlide(): void {
+  pauseForInteraction();
+  if (appMode === "lab") {
+    return;
+  }
+
+  if (appMode === "poster" && posterItems.length > 0) {
+    showPoster((posterIndex - 1 + posterItems.length) % posterItems.length);
+    return;
+  }
+
   if (slides.length === 0) {
     return;
   }
 
-  pauseForInteraction();
   if (config.fourUp) {
     rewindFourSlides();
   } else {
@@ -602,11 +790,20 @@ function showPreviousSlide(): void {
 }
 
 function showNextSlide(): void {
+  pauseForInteraction();
+  if (appMode === "lab") {
+    return;
+  }
+
+  if (appMode === "poster" && posterItems.length > 0) {
+    showPoster((posterIndex + 1) % posterItems.length);
+    return;
+  }
+
   if (slides.length === 0) {
     return;
   }
 
-  pauseForInteraction();
   if (config.fourUp) {
     void advanceFourSlides();
   } else {
@@ -648,6 +845,11 @@ function isSlideItem(value: unknown): value is SlideItem {
     slide.url &&
     (slide.kind === "image" || slide.kind === "pdf" || slide.kind === "html")
   );
+}
+
+function isLabFolder(value: unknown): value is LabFolder {
+  const lab = value as Partial<LabFolder>;
+  return Boolean(lab.name && lab.path);
 }
 
 function showStaticMessage(message: string): void {

@@ -147,7 +147,8 @@ body {
 }
 
 .nav-control,
-.zoom-control {
+.zoom-control,
+.menu-toggle {
   position: fixed;
   z-index: 18;
   display: grid;
@@ -164,9 +165,119 @@ body {
 }
 
 .interactive .nav-control,
-.interactive .zoom-control {
+.interactive .zoom-control,
+.interactive .menu-toggle {
   opacity: 1;
   pointer-events: auto;
+}
+
+.interactive.lab-mode .nav-control,
+.interactive.lab-mode .zoom-control {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.menu-toggle {
+  top: 18px;
+  left: 18px;
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  font-size: 27px;
+  line-height: 1;
+}
+
+.menu-panel {
+  position: fixed;
+  top: 74px;
+  left: 18px;
+  z-index: 21;
+  width: 260px;
+  max-width: calc(100vw - 36px);
+  overflow: visible;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  background: rgba(17, 24, 32, 0.94);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-8px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.menu-panel.open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.menu-item {
+  display: block;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #f7f8fb;
+  text-align: left;
+  font: inherit;
+}
+
+.menu-item:active,
+.menu-item:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.menu-parent::after,
+.lab-menu-list li:has(.lab-menu-list) > .lab-menu-item::after {
+  float: right;
+  content: "›";
+  color: rgba(247, 248, 251, 0.68);
+}
+
+.menu-section,
+.lab-menu-list li {
+  position: relative;
+}
+
+.lab-menu-list {
+  margin: 0;
+  padding: 8px;
+  list-style: none;
+}
+
+.labs-menu,
+.lab-menu-list .lab-menu-list {
+  position: absolute;
+  top: 0;
+  left: 100%;
+  width: 260px;
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  background: rgba(17, 24, 32, 0.96);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-8px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.menu-section:hover > .labs-menu,
+.menu-section:focus-within > .labs-menu,
+.lab-menu-list li:hover > .lab-menu-list,
+.lab-menu-list li:focus-within > .lab-menu-list {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.menu-empty {
+  padding: 8px 10px;
+  color: rgba(247, 248, 251, 0.68);
 }
 
 .nav-control {
@@ -207,8 +318,85 @@ body {
 }
 
 .nav-control:active,
-.zoom-control:active {
+.zoom-control:active,
+.menu-toggle:active {
   background: rgba(247, 248, 251, 0.22);
+}
+
+.lab-view {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  background: #05070a;
+}
+
+.lab-index {
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.lab-index iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #05070a;
+}
+
+.poster-selector {
+  display: grid;
+  grid-auto-rows: calc((100dvh - 44px) / 3);
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  height: 100%;
+  padding: 12px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: #111820;
+}
+
+.poster-option {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 7px;
+  min-height: 0;
+  height: calc((100dvh - 44px) / 3);
+  padding: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #f7f8fb;
+  font: inherit;
+  text-align: left;
+}
+
+.poster-preview {
+  min-height: 0;
+  overflow: hidden;
+  background: #05070a;
+}
+
+.poster-preview img,
+.poster-preview iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.poster-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
 }
 
 .message {
