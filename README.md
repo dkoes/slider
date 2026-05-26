@@ -31,7 +31,7 @@ Edit `slider_config.json`. The example file lists every supported setting and it
 }
 ```
 
-`slider_config.json` is ignored by git so private or environment-specific folder URLs are not committed. Agent settings are read when the Python agent starts. App settings, such as `time_per_slide_seconds`, `poster_time_seconds`, `interactive_pause_seconds`, `four_up`, and `debug`, are embedded as defaults when you run `npm run build`; URL parameters still override them at runtime.
+`slider_config.json` is ignored by git so private or environment-specific folder URLs are not committed. Agent settings are read when the Python agent starts. App settings, such as `time_per_slide_seconds`, `poster_time_seconds`, `interactive_pause_seconds`, `four_up`, `pdf_cache_size`, and `debug`, are embedded as defaults when you run `npm run build`; URL parameters still override them at runtime.
 
 You can also provide core agent settings with command-line flags or environment variables, such as `--folder` or `SLIDER_FOLDER_URL`.
 
