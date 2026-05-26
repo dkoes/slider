@@ -98,6 +98,7 @@ function getSliderDefaults(config) {
       firstDefined(config.sync_stale_after_seconds, config.stale_after_seconds, config.stale_after),
       1800
     ),
+    liveStreamMinutes: positiveNumber(config.live_stream_minutes, 30),
     fourUp: booleanValue(firstDefined(config.four_up, config.four), false),
     debug: booleanValue(config.debug, false)
   };
@@ -111,6 +112,7 @@ function formatSliderDefaults(defaults) {
     ["SLIDER_POSTER_TIME_SECONDS", defaults.posterTimeSeconds],
     ["SLIDER_INTERACTIVE_PAUSE_SECONDS", defaults.interactivePauseSeconds],
     ["SLIDER_SYNC_STALE_AFTER_SECONDS", defaults.syncStaleAfterSeconds],
+    ["SLIDER_LIVE_STREAM_MINUTES", defaults.liveStreamMinutes],
     ["SLIDER_FOUR_UP", defaults.fourUp],
     ["SLIDER_DEBUG", defaults.debug]
   ];

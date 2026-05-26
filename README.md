@@ -81,8 +81,11 @@ If the shared folder contains a `Labs` folder, the agent recursively syncs its s
 - `Announcements`: the default slideshow from the root folder
 - `Posters`: a randomized slideshow of all non-index PNG/PDF/HTML files under `Labs`
 - `Labs`: a hierarchical list of lab folders
+- `Cats`: a fullscreen YouTube cat livestream with a countdown timer
 
 Each lab folder can include an `index.html` file plus PNG/PDF/HTML poster files. Selecting a lab shows `index.html` on the left two-thirds of the screen and a scrollable poster selector on the right. Selecting a poster opens it full-screen with the normal interactive navigation and zoom controls.
+
+The `Cats` stream runs for `live_stream_minutes` before returning to whichever autoplay mode, `Announcements` or `Posters`, was running most recently.
 
 ## Development
 

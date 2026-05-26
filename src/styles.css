@@ -280,6 +280,12 @@ body {
   background: rgba(255, 255, 255, 0.12);
 }
 
+.menu-divider {
+  height: 1px;
+  margin: 8px 2px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
 .menu-parent::after,
 .lab-menu-list li:has(.lab-menu-list) > .lab-menu-item::after {
   float: right;
@@ -371,6 +377,63 @@ body {
 .zoom-control:active,
 .menu-toggle:active {
   background: rgba(247, 248, 251, 0.22);
+}
+
+.cat-stream {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  background: #05070a;
+}
+
+.cat-stream iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #05070a;
+}
+
+.live-stream-countdown {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 22;
+  display: none;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 8px;
+  background: rgba(17, 24, 32, 0.82);
+  color: #f7f8fb;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.3);
+  font: inherit;
+}
+
+.cat-mode .live-stream-countdown {
+  display: flex;
+}
+
+.cat-mode .nav-control,
+.cat-mode .zoom-control {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.live-stream-countdown span {
+  min-width: 5ch;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-stream-countdown button {
+  min-height: 32px;
+  padding: 5px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #f7f8fb;
+  font: inherit;
 }
 
 .lab-view {

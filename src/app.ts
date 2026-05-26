@@ -1,6 +1,7 @@
 type SlideKind = "image" | "pdf" | "html";
 type SyncStatus = "ok" | "syncing" | "error";
-type AppMode = "announcements" | "posters" | "lab" | "poster";
+type AutoplayMode = "announcements" | "posters";
+type AppMode = AutoplayMode | "lab" | "poster" | "cats";
 
 interface SliderGlobals {
   SLIDER_MANIFEST_URL?: string;
@@ -8,6 +9,7 @@ interface SliderGlobals {
   SLIDER_POSTER_TIME_SECONDS?: number;
   SLIDER_INTERACTIVE_PAUSE_SECONDS?: number;
   SLIDER_SYNC_STALE_AFTER_SECONDS?: number;
+  SLIDER_LIVE_STREAM_MINUTES?: number;
   SLIDER_FOUR_UP?: boolean;
   SLIDER_DEBUG?: boolean;
   SLIDER_PDF_WORKER_SOURCE?: string;
@@ -76,6 +78,7 @@ interface SliderConfig {
   posterTimeSeconds: number;
   interactivePauseSeconds: number;
   syncStaleAfterSeconds: number;
+  liveStreamMinutes: number;
   fourUp: boolean;
   debug: boolean;
 }
@@ -99,11 +102,15 @@ const menuToggle = mustGetElement("menu-toggle") as HTMLButtonElement;
 const menuPanel = mustGetElement("menu-panel");
 const announcementsButton = mustGetElement("menu-announcements") as HTMLButtonElement;
 const postersButton = mustGetElement("menu-posters") as HTMLButtonElement;
+const catsButton = mustGetElement("menu-cats") as HTMLButtonElement;
 const labsMenu = mustGetElement("labs-menu");
 const previousButton = mustGetElement("previous-slide") as HTMLButtonElement;
 const nextButton = mustGetElement("next-slide") as HTMLButtonElement;
 const zoomInButton = mustGetElement("zoom-in") as HTMLButtonElement;
 const zoomOutButton = mustGetElement("zoom-out") as HTMLButtonElement;
+const liveStreamCountdown = mustGetElement("live-stream-countdown");
+const liveStreamTime = mustGetElement("live-stream-time");
+const liveStreamReset = mustGetElement("live-stream-reset") as HTMLButtonElement;
 
 let slides: SlideItem[] = [];
 let labs: LabFolder[] = [];
@@ -130,6 +137,9 @@ let cycleNeedsRefresh = true;
 let running = false;
 let config: SliderConfig;
 let pdfWorkerUrl = "";
+let lastAutoplayMode: AutoplayMode = "announcements";
+let liveStreamEndsAt = 0;
+let liveStreamTimer = 0;
 
 declare const pdfjsLib: PdfJsGlobal | undefined;
 
@@ -148,7 +158,7 @@ async function start(): Promise<void> {
   // The slideshow loop advances announcement slides and the randomized poster
   // stream. Lab browsing and selected poster detail views are user-driven modes.
   while (running) {
-    if (appMode === "lab" || appMode === "poster") {
+    if (appMode === "lab" || appMode === "poster" || appMode === "cats") {
       await sleep(500);
       continue;
     }
@@ -193,6 +203,11 @@ function wireControls(): void {
   menuPanel.addEventListener("click", (event) => event.stopPropagation());
   announcementsButton.addEventListener("click", () => showAnnouncements());
   postersButton.addEventListener("click", () => showPosters());
+  catsButton.addEventListener("click", () => showCats());
+  liveStreamReset.addEventListener("click", (event) => {
+    event.stopPropagation();
+    resetLiveStreamCountdown();
+  });
   previousButton.addEventListener("click", () => showPreviousSlide());
   nextButton.addEventListener("click", () => showNextSlide());
   zoomInButton.addEventListener("click", () => {
@@ -240,6 +255,10 @@ function getConfig(): SliderConfig {
     : Number(globals.SLIDER_INTERACTIVE_PAUSE_SECONDS);
   const rawStaleAfter = params.get("stale_after_seconds");
   const parsedStaleAfter = rawStaleAfter ? Number(rawStaleAfter) : Number(globals.SLIDER_SYNC_STALE_AFTER_SECONDS);
+  const rawLiveStreamMinutes = params.get("live_stream_minutes");
+  const parsedLiveStreamMinutes = rawLiveStreamMinutes
+    ? Number(rawLiveStreamMinutes)
+    : Number(globals.SLIDER_LIVE_STREAM_MINUTES);
   const fourUp = parseBooleanParam(params.get("four_up"), Boolean(globals.SLIDER_FOUR_UP));
 
   return {
@@ -250,6 +269,7 @@ function getConfig(): SliderConfig {
     posterTimeSeconds: Number.isFinite(parsedPosterTime) && parsedPosterTime > 0 ? parsedPosterTime : timePerSlideSeconds * 2,
     interactivePauseSeconds: Number.isFinite(parsedInteractivePause) && parsedInteractivePause > 0 ? parsedInteractivePause : 120,
     syncStaleAfterSeconds: Number.isFinite(parsedStaleAfter) && parsedStaleAfter > 0 ? parsedStaleAfter : 1800,
+    liveStreamMinutes: Number.isFinite(parsedLiveStreamMinutes) && parsedLiveStreamMinutes > 0 ? parsedLiveStreamMinutes : 30,
     fourUp,
     debug: parseBooleanParam(params.get("debug"), Boolean(globals.SLIDER_DEBUG))
   };
@@ -391,7 +411,7 @@ function formatAge(ageSeconds: number): string {
 
 async function showSlide(slide: SlideItem): Promise<void> {
   if (appMode === "announcements" || appMode === "posters" || appMode === "poster") {
-    stage.querySelectorAll(".lab-view").forEach((node) => node.remove());
+    stage.querySelectorAll(".lab-view, .cat-stream").forEach((node) => node.remove());
   }
   activeFourSlides.forEach((node) => node.remove());
   activeFourSlides = [];
@@ -453,6 +473,8 @@ function createLabMenuList(items: LabFolder[]): HTMLElement {
 
 function showAnnouncements(): void {
   setAppMode("announcements");
+  lastAutoplayMode = "announcements";
+  stopLiveStreamCountdown();
   posterItems = [];
   posterIndex = -1;
   menuPanel.classList.remove("open");
@@ -471,6 +493,8 @@ function showAnnouncements(): void {
 
 function showPosters(): void {
   setAppMode("posters");
+  lastAutoplayMode = "posters";
+  stopLiveStreamCountdown();
   posterItems = [];
   posterIndex = -1;
   menuPanel.classList.remove("open");
@@ -492,6 +516,75 @@ function showPosters(): void {
   } else {
     showStaticMessage(getEmptyAutoplayMessage());
   }
+}
+
+function showCats(): void {
+  menuPanel.classList.remove("open");
+  exitInteractiveMode();
+  setAppMode("cats");
+  activeSlide?.remove();
+  activeSlide = null;
+  activeFourSlides.forEach((node) => node.remove());
+  activeFourSlides = [];
+  activeFourIndices = [];
+  stage.querySelectorAll(".slide, .lab-view, .cat-stream").forEach((node) => node.remove());
+
+  const view = document.createElement("article");
+  view.className = "cat-stream";
+  view.setAttribute("aria-label", "Cats live stream");
+
+  const frame = document.createElement("iframe");
+  frame.src = "https://www.youtube.com/embed/e9C9K8ltDfk?autoplay=1&mute=1&playsinline=1&rel=0";
+  frame.title = "Cats live stream";
+  frame.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+  frame.allowFullscreen = true;
+  view.append(frame);
+  stage.append(view);
+
+  // Cats is an interrupting mode. The timer owns the return path to whichever
+  // autoplay mode was active most recently before the stream was opened.
+  resetLiveStreamCountdown();
+  showDebugTitle("Cats");
+}
+
+function resetLiveStreamCountdown(): void {
+  liveStreamEndsAt = Date.now() + config.liveStreamMinutes * 60 * 1000;
+  updateLiveStreamCountdown();
+  window.clearInterval(liveStreamTimer);
+  liveStreamTimer = window.setInterval(updateLiveStreamCountdown, 1000);
+}
+
+function stopLiveStreamCountdown(): void {
+  liveStreamEndsAt = 0;
+  window.clearInterval(liveStreamTimer);
+}
+
+function updateLiveStreamCountdown(): void {
+  if (appMode !== "cats" || liveStreamEndsAt <= 0) {
+    return;
+  }
+
+  const remainingMs = Math.max(0, liveStreamEndsAt - Date.now());
+  liveStreamTime.textContent = formatCountdown(remainingMs);
+  if (remainingMs <= 0) {
+    stopLiveStreamCountdown();
+    returnToLastAutoplayMode();
+  }
+}
+
+function returnToLastAutoplayMode(): void {
+  if (lastAutoplayMode === "posters") {
+    showPosters();
+  } else {
+    showAnnouncements();
+  }
+}
+
+function formatCountdown(remainingMs: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 function showLab(lab: LabFolder): void {
@@ -928,6 +1021,7 @@ function showControls(): void {
 function setAppMode(mode: AppMode): void {
   appMode = mode;
   document.body.classList.toggle("lab-mode", mode === "lab");
+  document.body.classList.toggle("cat-mode", mode === "cats");
   document.body.classList.toggle("four-mode", config.fourUp && mode === "announcements");
 }
 

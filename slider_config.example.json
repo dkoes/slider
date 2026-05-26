@@ -9,6 +9,7 @@
   "time_per_slide_seconds": 30,
   "poster_time_seconds": 60,
   "interactive_pause_seconds": 120,
+  "live_stream_minutes": 30,
   "four_up": false,
   "debug": false
 }
