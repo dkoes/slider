@@ -1,0 +1,95 @@
+# Slider
+
+The built product is a Python slider agent with the slideshow HTML, CSS, and JavaScript embedded in it. The agent syncs an anonymous SharePoint folder into local files, writes `manifest.json`, and serves everything from localhost so the browser never talks directly to SharePoint.
+
+## Build
+
+```sh
+npm install
+npm run build
+```
+
+This writes:
+
+```text
+build/slider_agent.py
+```
+
+## Configure
+
+Create a local `slider_config.json` next to `package.json`:
+
+```sh
+cp slider_config.example.json slider_config.json
+```
+
+Edit `slider_config.json` and set:
+
+```json
+{
+  "folder_url": "https://your-tenant.sharepoint.com/:f:/..."
+}
+```
+
+`slider_config.json` is ignored by git so private or environment-specific folder URLs are not committed. You can also provide the URL with `--folder` or `SLIDER_FOLDER_URL`.
+
+## Run Locally
+
+```sh
+python3 build/slider_agent.py
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8788/slider.html
+```
+
+Useful options:
+
+```sh
+python3 build/slider_agent.py --folder "https://your-tenant.sharepoint.com/:f:/s/..." --port 8788 --sync-interval 300
+python3 build/slider_agent.py --once --data-dir ./slider_data
+```
+
+The agent keeps the last successfully synced slides if SharePoint becomes unreachable. The manifest records sync health, and the slideshow displays a banner when sync fails or becomes stale.
+
+The slideshow pauses for touch/mouse interaction and shows navigation plus zoom controls. The default interactive pause is 120 seconds. Override it with:
+
+```text
+http://127.0.0.1:8788/slider.html?interactive_pause=180
+```
+
+To show four slides at once in equal quarters, add:
+
+```text
+http://127.0.0.1:8788/slider.html?four=1
+```
+
+In four-up mode, each advance shifts the visible slides forward by one quarter and introduces one new slide.
+
+## Development
+
+For autorebuild and agent restart while editing TypeScript, CSS, HTML, or Python:
+
+```sh
+npm run dev
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8788/slider.html
+```
+
+Refresh the browser after a rebuild to pick up embedded HTML/JS/CSS changes.
+
+## Windows Packaging
+
+The agent uses only the Python standard library. For a Windows deployment that does not require installing Python, package it with PyInstaller:
+
+```sh
+pyinstaller --onefile build/slider_agent.py
+```
+
+No separate `slider.html` is needed. The executable creates and updates `slider_data/` next to where it runs unless `--data-dir` is provided.

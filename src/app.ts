@@ -1,0 +1,727 @@
+type SlideKind = "image" | "pdf" | "html";
+type SyncStatus = "ok" | "syncing" | "error";
+
+interface SliderGlobals {
+  SLIDER_MANIFEST_URL?: string;
+  SLIDER_TIME_PER_SLIDE_SECONDS?: number;
+  SLIDER_INTERACTIVE_PAUSE_SECONDS?: number;
+  SLIDER_SYNC_STALE_AFTER_SECONDS?: number;
+  SLIDER_FOUR_UP?: boolean;
+  SLIDER_DEBUG?: boolean;
+}
+
+interface SlideItem {
+  id?: string;
+  name: string;
+  kind: SlideKind;
+  url: string;
+  modified?: string;
+}
+
+interface SyncState {
+  status?: SyncStatus;
+  error?: string;
+  lastAttempt?: string;
+  lastSuccess?: string;
+  staleAfterSeconds?: number;
+}
+
+interface SlideManifest {
+  generatedAt?: string;
+  sync?: SyncState;
+  slides?: SlideItem[];
+}
+
+interface SliderConfig {
+  manifestUrl: string;
+  timePerSlideSeconds: number;
+  interactivePauseSeconds: number;
+  syncStaleAfterSeconds: number;
+  fourUp: boolean;
+  debug: boolean;
+}
+
+interface ViewTransform {
+  scale: number;
+  x: number;
+  y: number;
+}
+
+interface PointerState {
+  id: number;
+  x: number;
+  y: number;
+}
+
+const stage = mustGetElement("stage");
+const statusNode = mustGetElement("status");
+const banner = mustGetElement("banner");
+const previousButton = mustGetElement("previous-slide") as HTMLButtonElement;
+const nextButton = mustGetElement("next-slide") as HTMLButtonElement;
+const zoomInButton = mustGetElement("zoom-in") as HTMLButtonElement;
+const zoomOutButton = mustGetElement("zoom-out") as HTMLButtonElement;
+
+let slides: SlideItem[] = [];
+let slideIndex = -1;
+let activeSlide: HTMLElement | null = null;
+let activeFourSlides: HTMLElement[] = [];
+let activeFourIndices: number[] = [];
+let nextFourSlideIndex = 0;
+let activeTransformTarget: HTMLElement | null = null;
+let activeTransform: ViewTransform = getDefaultTransform();
+let transformByTarget = new WeakMap<HTMLElement, ViewTransform>();
+let activePointers = new Map<number, PointerState>();
+let gestureStartTransform: ViewTransform | null = null;
+let gestureStartDistance = 0;
+let gestureStartCenter: { x: number; y: number } | null = null;
+let interactivePauseUntil = 0;
+let controlsHideTimer = 0;
+let cycleNeedsRefresh = true;
+let running = false;
+let config: SliderConfig;
+
+start().catch((error: unknown) => {
+  showBanner(`Slider failed to start: ${getErrorMessage(error)}`);
+});
+
+async function start(): Promise<void> {
+  config = getConfig();
+  wireControls();
+  document.body.classList.toggle("four-mode", config.fourUp);
+  running = true;
+  await refreshSlides(config);
+
+  while (running) {
+    if (slides.length === 0) {
+      await sleep(5000);
+      await refreshSlides(config);
+      continue;
+    }
+
+    if (cycleNeedsRefresh) {
+      await refreshSlides(config);
+      cycleNeedsRefresh = false;
+    }
+
+    if (config.fourUp) {
+      await advanceFourSlides();
+    } else {
+      slideIndex = (slideIndex + 1) % slides.length;
+      await showSlide(slides[slideIndex]);
+    }
+
+    if (slideIndex === slides.length - 1) {
+      cycleNeedsRefresh = true;
+    }
+
+    await waitForAdvance(config.timePerSlideSeconds * 1000);
+  }
+}
+
+function wireControls(): void {
+  previousButton.addEventListener("click", () => showPreviousSlide());
+  nextButton.addEventListener("click", () => showNextSlide());
+  zoomInButton.addEventListener("click", () => {
+    pauseForInteraction();
+    zoomAt(1.25);
+  });
+  zoomOutButton.addEventListener("click", () => {
+    pauseForInteraction();
+    zoomAt(0.8);
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowLeft") {
+      showPreviousSlide();
+    } else if (event.key === "ArrowRight") {
+      showNextSlide();
+    } else if (event.key === "+" || event.key === "=") {
+      pauseForInteraction();
+      zoomAt(1.25);
+    } else if (event.key === "-" || event.key === "_") {
+      pauseForInteraction();
+      zoomAt(0.8);
+    }
+  });
+}
+
+function getConfig(): SliderConfig {
+  const globals = window as Window & SliderGlobals;
+  const params = new URLSearchParams(window.location.search);
+  const manifestUrl = params.get("manifest")?.trim() || globals.SLIDER_MANIFEST_URL?.trim() || "/manifest.json";
+  const rawTime = params.get("time") || params.get("time_per_slide");
+  const parsedTime = rawTime ? Number(rawTime) : Number(globals.SLIDER_TIME_PER_SLIDE_SECONDS);
+  const rawInteractivePause = params.get("interactive_pause") || params.get("interactive_pause_seconds");
+  const parsedInteractivePause = rawInteractivePause
+    ? Number(rawInteractivePause)
+    : Number(globals.SLIDER_INTERACTIVE_PAUSE_SECONDS);
+  const rawStaleAfter = params.get("stale_after") || params.get("sync_stale_after");
+  const parsedStaleAfter = rawStaleAfter ? Number(rawStaleAfter) : Number(globals.SLIDER_SYNC_STALE_AFTER_SECONDS);
+  const fourUp = parseBooleanParam(params.get("four"), Boolean(globals.SLIDER_FOUR_UP));
+
+  return {
+    manifestUrl,
+    timePerSlideSeconds: Number.isFinite(parsedTime) && parsedTime > 0 ? parsedTime : 10,
+    interactivePauseSeconds: Number.isFinite(parsedInteractivePause) && parsedInteractivePause > 0 ? parsedInteractivePause : 120,
+    syncStaleAfterSeconds: Number.isFinite(parsedStaleAfter) && parsedStaleAfter > 0 ? parsedStaleAfter : 1800,
+    fourUp,
+    debug: parseBooleanParam(params.get("debug"), Boolean(globals.SLIDER_DEBUG))
+  };
+}
+
+async function refreshSlides(config: SliderConfig): Promise<void> {
+  try {
+    const manifest = await fetchManifest(config.manifestUrl);
+    const nextSlides = (manifest.slides || []).filter(isSlideItem);
+    const slideCountChanged = slides.length !== nextSlides.length;
+    slides = nextSlides;
+    slideIndex = normalizeSlideIndex(slideIndex, slides.length);
+    if (config.fourUp && slideCountChanged) {
+      activeFourSlides.forEach((node) => node.remove());
+      activeFourSlides = [];
+      activeFourIndices = [];
+      nextFourSlideIndex = 0;
+    }
+    updateSyncBanner(manifest, config);
+
+    if (slides.length === 0) {
+      showStaticMessage("No supported slides are available yet.");
+    } else {
+      clearStaticMessage();
+    }
+  } catch (error: unknown) {
+    showBanner(`Unable to read local slide manifest: ${getErrorMessage(error)}`);
+  }
+}
+
+async function fetchManifest(manifestUrl: string): Promise<SlideManifest> {
+  const response = await fetch(cacheBustedUrl(manifestUrl), { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}`.trim());
+  }
+
+  return (await response.json()) as SlideManifest;
+}
+
+function updateSyncBanner(manifest: SlideManifest, config: SliderConfig): void {
+  const sync = manifest.sync;
+  const staleAfterSeconds = sync?.staleAfterSeconds || config.syncStaleAfterSeconds;
+  const staleMessage = getStaleMessage(sync?.lastSuccess, staleAfterSeconds);
+
+  if (sync?.status && sync.status !== "ok") {
+    const detail = sync.error ? `: ${sync.error}` : "";
+    showBanner(`Slide sync ${sync.status}${detail}`);
+    return;
+  }
+
+  if (staleMessage) {
+    showBanner(staleMessage);
+    return;
+  }
+
+  hideBanner();
+}
+
+function getStaleMessage(lastSuccess: string | undefined, staleAfterSeconds: number): string {
+  if (!lastSuccess) {
+    return "Slide sync has not completed yet.";
+  }
+
+  const lastSuccessMs = Date.parse(lastSuccess);
+  if (!Number.isFinite(lastSuccessMs)) {
+    return "Slide sync health is unknown.";
+  }
+
+  const ageSeconds = (Date.now() - lastSuccessMs) / 1000;
+  return ageSeconds > staleAfterSeconds
+    ? `Slide sync is stale; last successful sync was ${formatAge(ageSeconds)} ago.`
+    : "";
+}
+
+function formatAge(ageSeconds: number): string {
+  if (ageSeconds < 120) {
+    return `${Math.max(1, Math.round(ageSeconds))} seconds`;
+  }
+
+  if (ageSeconds < 7200) {
+    return `${Math.round(ageSeconds / 60)} minutes`;
+  }
+
+  return `${Math.round(ageSeconds / 3600)} hours`;
+}
+
+async function showSlide(slide: SlideItem): Promise<void> {
+  activeFourSlides.forEach((node) => node.remove());
+  activeFourSlides = [];
+
+  const next = document.createElement("article");
+  next.className = "slide";
+  next.setAttribute("aria-label", slide.name);
+  next.append(createInteractiveViewport(slide));
+  stage.append(next);
+
+  await waitForPaint();
+  activeSlide?.classList.remove("active");
+  activeSlide?.classList.add("exiting");
+  next.classList.add("active");
+
+  const previous = activeSlide;
+  activeSlide = next;
+  resetTransform();
+  showDebugTitle(slide.name);
+
+  window.setTimeout(() => {
+    previous?.remove();
+  }, 700);
+}
+
+async function advanceFourSlides(): Promise<void> {
+  activeSlide?.remove();
+  activeSlide = null;
+
+  if (activeFourSlides.length !== Math.min(4, slides.length)) {
+    initializeFourSlides();
+    return;
+  }
+
+  if (activeFourSlides.length < 4) {
+    initializeFourSlides();
+    return;
+  }
+
+  const [topRight, topLeft, bottomRight, bottomLeft] = activeFourSlides;
+  const [, topLeftIndex] = activeFourIndices;
+  const enteringIndex = nextFourSlideIndex;
+  nextFourSlideIndex = (nextFourSlideIndex + 1) % slides.length;
+
+  const entering = createFourSlideArticle(enteringIndex);
+  entering.classList.add("quarter", "q4", "active");
+  stage.append(entering);
+
+  const wrapped = createFourSlideArticle(topLeftIndex);
+  wrapped.classList.add("quarter", "q2-enter", "active");
+  stage.append(wrapped);
+
+  await waitForPaint();
+  bottomLeft.classList.add("q-exit");
+  topRight && setQuarterClass(topRight, 1);
+  topLeft.classList.add("q-wrap-exit");
+  setQuarterClass(wrapped, 2);
+  bottomRight && setQuarterClass(bottomRight, 3);
+  setQuarterClass(entering, 0);
+
+  activeFourSlides = [entering, topRight, wrapped, bottomRight].filter(Boolean);
+  activeFourIndices = [enteringIndex, activeFourIndices[0], topLeftIndex, activeFourIndices[2]];
+
+  window.setTimeout(() => {
+    bottomLeft.remove();
+    topLeft.remove();
+  }, 700);
+
+  showDebugTitle(getFourUpTitle());
+  setDefaultFourUpTransformTarget();
+}
+
+function initializeFourSlides(): void {
+  activeFourSlides.forEach((node) => node.remove());
+  activeFourSlides = [];
+  activeFourIndices = [];
+  const count = Math.min(4, slides.length);
+  for (let offset = 0; offset < count; offset += 1) {
+    const index = (nextFourSlideIndex + offset) % slides.length;
+    const tile = createFourSlideArticle(index);
+    tile.classList.add("quarter", `q${offset}`, "active");
+    stage.append(tile);
+    activeFourSlides.push(tile);
+    activeFourIndices.push(index);
+  }
+  nextFourSlideIndex = (nextFourSlideIndex + count) % slides.length;
+  setDefaultFourUpTransformTarget();
+  showDebugTitle(getFourUpTitle());
+}
+
+function createSlideArticle(slide: SlideItem): HTMLElement {
+  const node = document.createElement("article");
+  node.className = "slide";
+  node.setAttribute("aria-label", slide.name);
+  node.append(createInteractiveViewport(slide));
+  return node;
+}
+
+function createFourSlideArticle(index: number): HTMLElement {
+  const node = createSlideArticle(slides[index]);
+  node.dataset.slideIndex = String(index);
+  return node;
+}
+
+function setQuarterClass(tile: HTMLElement, quarter: number): void {
+  tile.classList.remove("q-1", "q0", "q1", "q2", "q3", "q4", "q2-enter", "q-wrap-exit", "q-exit", "q-exit-reverse");
+  tile.classList.add(`q${quarter}`);
+}
+
+function getFourUpTitle(): string {
+  return activeFourIndices.map((index) => slides[index]?.name || "").filter(Boolean).join(" | ");
+}
+
+function createInteractiveViewport(slide: SlideItem): HTMLElement {
+  const viewport = document.createElement("div");
+  viewport.className = "slide-viewport";
+  viewport.dataset.kind = slide.kind;
+
+  const content = document.createElement("div");
+  content.className = "slide-content";
+  content.append(createSlideContent(slide));
+  viewport.append(content);
+  wireViewportInteractions(viewport);
+
+  return viewport;
+}
+
+function createSlideContent(slide: SlideItem): HTMLElement {
+  if (slide.kind === "image") {
+    const image = document.createElement("img");
+    image.src = slide.url;
+    image.alt = slide.name;
+    image.decoding = "async";
+    image.addEventListener("error", () => showBanner(`Unable to display ${slide.name}.`));
+    return image;
+  }
+
+  const frame = document.createElement("iframe");
+  frame.src = slide.kind === "pdf"
+    ? `${slide.url}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`
+    : slide.url;
+  frame.title = slide.name;
+
+  if (slide.kind === "html") {
+    frame.sandbox.add("allow-scripts", "allow-same-origin", "allow-forms", "allow-popups");
+  }
+
+  return frame;
+}
+
+function wireViewportInteractions(viewport: HTMLElement): void {
+  viewport.addEventListener("pointerdown", (event) => {
+    pauseForInteraction();
+    setActiveTransformTarget(viewport);
+    viewport.setPointerCapture(event.pointerId);
+    activePointers.set(event.pointerId, { id: event.pointerId, x: event.clientX, y: event.clientY });
+    startGesture();
+    event.preventDefault();
+  });
+
+  viewport.addEventListener("pointermove", (event) => {
+    if (!activePointers.has(event.pointerId)) {
+      return;
+    }
+
+    activePointers.set(event.pointerId, { id: event.pointerId, x: event.clientX, y: event.clientY });
+    updateGesture();
+    event.preventDefault();
+  });
+
+  const endPointer = (event: PointerEvent) => {
+    activePointers.delete(event.pointerId);
+    startGesture();
+  };
+  viewport.addEventListener("pointerup", endPointer);
+  viewport.addEventListener("pointercancel", endPointer);
+
+  viewport.addEventListener("wheel", (event) => {
+    pauseForInteraction();
+    zoomAt(event.deltaY < 0 ? 1.12 : 0.88, event.clientX, event.clientY);
+    event.preventDefault();
+  }, { passive: false });
+}
+
+function startGesture(): void {
+  const pointers = Array.from(activePointers.values());
+  gestureStartTransform = { ...activeTransform };
+
+  if (pointers.length >= 2) {
+    gestureStartDistance = getDistance(pointers[0], pointers[1]);
+    gestureStartCenter = getCenter(pointers[0], pointers[1]);
+  } else if (pointers.length === 1) {
+    gestureStartDistance = 0;
+    gestureStartCenter = { x: pointers[0].x, y: pointers[0].y };
+  } else {
+    gestureStartDistance = 0;
+    gestureStartCenter = null;
+    gestureStartTransform = null;
+  }
+}
+
+function updateGesture(): void {
+  if (!gestureStartTransform || !gestureStartCenter) {
+    return;
+  }
+
+  pauseForInteraction();
+  const pointers = Array.from(activePointers.values());
+  if (pointers.length >= 2) {
+    const center = getCenter(pointers[0], pointers[1]);
+    const distance = getDistance(pointers[0], pointers[1]);
+    const scaleChange = gestureStartDistance > 0 ? distance / gestureStartDistance : 1;
+    activeTransform = clampTransform({
+      scale: gestureStartTransform.scale * scaleChange,
+      x: gestureStartTransform.x + center.x - gestureStartCenter.x,
+      y: gestureStartTransform.y + center.y - gestureStartCenter.y
+    });
+  } else if (pointers.length === 1) {
+    activeTransform = clampTransform({
+      ...gestureStartTransform,
+      x: gestureStartTransform.x + pointers[0].x - gestureStartCenter.x,
+      y: gestureStartTransform.y + pointers[0].y - gestureStartCenter.y
+    });
+  }
+
+  applyTransform();
+}
+
+function getDistance(a: PointerState, b: PointerState): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function getCenter(a: PointerState, b: PointerState): { x: number; y: number } {
+  return {
+    x: (a.x + b.x) / 2,
+    y: (a.y + b.y) / 2
+  };
+}
+
+function pauseForInteraction(): void {
+  interactivePauseUntil = Date.now() + config.interactivePauseSeconds * 1000;
+  showControls();
+}
+
+function showControls(): void {
+  document.body.classList.add("interactive");
+  window.clearTimeout(controlsHideTimer);
+  controlsHideTimer = window.setTimeout(() => {
+    if (Date.now() >= interactivePauseUntil) {
+      document.body.classList.remove("interactive");
+    }
+  }, config.interactivePauseSeconds * 1000 + 150);
+}
+
+function resetTransform(): void {
+  activePointers = new Map();
+  gestureStartTransform = null;
+  gestureStartCenter = null;
+  gestureStartDistance = 0;
+  activeTransform = getDefaultTransform();
+  activeTransformTarget = activeSlide?.querySelector(".slide-content") || null;
+  if (activeTransformTarget) {
+    transformByTarget.set(activeTransformTarget, activeTransform);
+  }
+  applyTransform();
+}
+
+function getDefaultTransform(): ViewTransform {
+  return { scale: 1, x: 0, y: 0 };
+}
+
+function zoomAt(factor: number, clientX: number = window.innerWidth / 2, clientY: number = window.innerHeight / 2): void {
+  if (!activeTransformTarget) {
+    return;
+  }
+
+  const previousScale = activeTransform.scale;
+  const nextScale = Math.min(5, Math.max(1, previousScale * factor));
+  const scaleChange = nextScale / previousScale;
+  const centerX = window.innerWidth / 2;
+  const centerY = window.innerHeight / 2;
+
+  activeTransform = clampTransform({
+    scale: nextScale,
+    x: (activeTransform.x - (clientX - centerX)) * scaleChange + (clientX - centerX),
+    y: (activeTransform.y - (clientY - centerY)) * scaleChange + (clientY - centerY)
+  });
+  applyTransform();
+}
+
+function clampTransform(transform: ViewTransform): ViewTransform {
+  const scale = Math.min(5, Math.max(1, transform.scale));
+  if (scale === 1) {
+    return { scale, x: 0, y: 0 };
+  }
+
+  const maxX = window.innerWidth * (scale - 1) * 0.5;
+  const maxY = window.innerHeight * (scale - 1) * 0.5;
+  return {
+    scale,
+    x: Math.min(maxX, Math.max(-maxX, transform.x)),
+    y: Math.min(maxY, Math.max(-maxY, transform.y))
+  };
+}
+
+function applyTransform(): void {
+  if (!activeTransformTarget) {
+    return;
+  }
+
+  transformByTarget.set(activeTransformTarget, activeTransform);
+  activeTransformTarget.style.transform = `translate3d(${activeTransform.x}px, ${activeTransform.y}px, 0) scale(${activeTransform.scale})`;
+}
+
+function setActiveTransformTarget(viewport: HTMLElement): void {
+  const target = viewport.querySelector(".slide-content") as HTMLElement | null;
+  if (!target || target === activeTransformTarget) {
+    return;
+  }
+
+  activeTransformTarget = target;
+  activeTransform = transformByTarget.get(target) || getDefaultTransform();
+  applyTransform();
+}
+
+function setDefaultFourUpTransformTarget(): void {
+  if (!config.fourUp || activeTransformTarget?.isConnected) {
+    return;
+  }
+
+  const target = activeFourSlides[0]?.querySelector(".slide-content") as HTMLElement | null;
+  if (target) {
+    activeTransformTarget = target;
+    activeTransform = transformByTarget.get(target) || getDefaultTransform();
+    applyTransform();
+  }
+}
+
+function showPreviousSlide(): void {
+  if (slides.length === 0) {
+    return;
+  }
+
+  pauseForInteraction();
+  if (config.fourUp) {
+    rewindFourSlides();
+  } else {
+    slideIndex = (slideIndex - 1 + slides.length) % slides.length;
+    void showSlide(slides[slideIndex]);
+  }
+}
+
+function showNextSlide(): void {
+  if (slides.length === 0) {
+    return;
+  }
+
+  pauseForInteraction();
+  if (config.fourUp) {
+    void advanceFourSlides();
+  } else {
+    slideIndex = (slideIndex + 1) % slides.length;
+    void showSlide(slides[slideIndex]);
+  }
+}
+
+function rewindFourSlides(): void {
+  const count = Math.min(4, slides.length);
+  nextFourSlideIndex = (nextFourSlideIndex - count - 1 + slides.length * 2) % slides.length;
+  activeFourSlides = [];
+  activeFourIndices = [];
+  initializeFourSlides();
+}
+
+async function waitForAdvance(durationMs: number): Promise<void> {
+  const end = Date.now() + durationMs;
+  while (running) {
+    const remaining = Math.max(end - Date.now(), interactivePauseUntil - Date.now());
+    if (remaining <= 0) {
+      document.body.classList.remove("interactive");
+      return;
+    }
+    await sleep(Math.min(remaining, 250));
+  }
+}
+
+function cacheBustedUrl(url: string): string {
+  const parsed = new URL(url, window.location.href);
+  parsed.searchParams.set("_", String(Date.now()));
+  return parsed.href;
+}
+
+function isSlideItem(value: unknown): value is SlideItem {
+  const slide = value as Partial<SlideItem>;
+  return Boolean(
+    slide.name &&
+    slide.url &&
+    (slide.kind === "image" || slide.kind === "pdf" || slide.kind === "html")
+  );
+}
+
+function showStaticMessage(message: string): void {
+  clearStaticMessage();
+  const slide = document.createElement("article");
+  slide.className = "slide active";
+  slide.dataset.staticMessage = "true";
+
+  const box = document.createElement("div");
+  box.className = "message";
+  box.textContent = message;
+  slide.append(box);
+  stage.append(slide);
+  activeSlide = slide;
+}
+
+function clearStaticMessage(): void {
+  stage.querySelectorAll("[data-static-message='true']").forEach((node) => node.remove());
+}
+
+function showBanner(message: string): void {
+  banner.textContent = message;
+  banner.classList.add("visible");
+}
+
+function hideBanner(): void {
+  banner.classList.remove("visible");
+}
+
+function showDebugTitle(name: string): void {
+  if (!config.debug) {
+    statusNode.classList.remove("visible");
+    statusNode.textContent = "";
+    return;
+  }
+
+  statusNode.textContent = name;
+  statusNode.classList.add("visible");
+}
+
+function normalizeSlideIndex(current: number, length: number): number {
+  if (length <= 0) {
+    return -1;
+  }
+
+  return current >= length ? -1 : current;
+}
+
+function mustGetElement(id: string): HTMLElement {
+  const element = document.getElementById(id);
+  if (!element) {
+    throw new Error(`Missing #${id}`);
+  }
+  return element;
+}
+
+function waitForPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function parseBooleanParam(value: string | null, fallback: boolean): boolean {
+  if (value === null || value === "") {
+    return fallback;
+  }
+
+  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

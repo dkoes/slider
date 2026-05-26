@@ -1,0 +1,264 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #05070a;
+  color: #f7f8fb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#slider-root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: #05070a;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #05070a;
+}
+
+.slide {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  background: #05070a;
+  transform: translateX(100%);
+  transition: transform 620ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.slide.active {
+  transform: translateX(0);
+  z-index: 2;
+}
+
+.slide.exiting {
+  transform: translateX(-100%);
+  z-index: 1;
+}
+
+.four-mode .slide {
+  width: 50%;
+  height: 50%;
+  place-items: stretch;
+  transform: translate(200%, 0);
+}
+
+.four-mode .slide.quarter {
+  z-index: 2;
+}
+
+.four-mode .slide.q-1 {
+  transform: translate(-100%, 100%);
+}
+
+.four-mode .slide.q0 {
+  transform: translate(100%, 0);
+}
+
+.four-mode .slide.q1 {
+  transform: translate(0, 0);
+}
+
+.four-mode .slide.q2 {
+  transform: translate(100%, 100%);
+}
+
+.four-mode .slide.q3 {
+  transform: translate(0, 100%);
+}
+
+.four-mode .slide.q4 {
+  transform: translate(200%, 0);
+}
+
+.four-mode .slide.q2-enter {
+  transform: translate(200%, 100%);
+}
+
+.four-mode .slide.q-wrap-exit {
+  transform: translate(-100%, 0);
+  z-index: 1;
+}
+
+.four-mode .slide.q-exit {
+  transform: translate(-100%, 100%);
+  z-index: 1;
+}
+
+.four-mode .slide.q-exit-reverse {
+  transform: translate(200%, 0);
+  z-index: 1;
+}
+
+.slide img,
+.slide iframe,
+.slide object {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #05070a;
+}
+
+.slide-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+
+.slide-viewport:active {
+  cursor: grabbing;
+}
+
+.slide-content {
+  width: 100%;
+  height: 100%;
+  transform-origin: center center;
+  will-change: transform;
+}
+
+.slide-content iframe {
+  pointer-events: none;
+}
+
+.slide-viewport[data-kind="html"] .slide-content iframe {
+  pointer-events: auto;
+}
+
+.slide img {
+  object-fit: contain;
+}
+
+.nav-control,
+.zoom-control {
+  position: fixed;
+  z-index: 18;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(17, 24, 32, 0.74);
+  color: #f7f8fb;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease, transform 160ms ease, background 160ms ease;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.interactive .nav-control,
+.interactive .zoom-control {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.nav-control {
+  top: 50%;
+  width: clamp(48px, 8vw, 74px);
+  height: clamp(72px, 14vw, 118px);
+  border-radius: 8px;
+  transform: translateY(-50%);
+  font-size: clamp(44px, 8vw, 76px);
+  line-height: 1;
+}
+
+.nav-control-left {
+  left: 18px;
+}
+
+.nav-control-right {
+  right: 18px;
+}
+
+#zoom-controls {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 19;
+  display: grid;
+  grid-template-columns: repeat(2, 48px);
+  gap: 8px;
+}
+
+.zoom-control {
+  position: static;
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  font-size: 30px;
+  line-height: 1;
+}
+
+.nav-control:active,
+.zoom-control:active {
+  background: rgba(247, 248, 251, 0.22);
+}
+
+.message {
+  display: grid;
+  place-items: center;
+  width: min(720px, calc(100vw - 48px));
+  min-height: 180px;
+  padding: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: #111820;
+  color: #f7f8fb;
+  text-align: center;
+  font-size: clamp(18px, 2.6vw, 30px);
+  line-height: 1.35;
+}
+
+#status,
+#banner {
+  position: fixed;
+  left: 50%;
+  z-index: 20;
+  width: min(760px, calc(100vw - 32px));
+  padding: 12px 16px;
+  border-radius: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -10px);
+  transition: opacity 180ms ease, transform 180ms ease;
+  font-size: 15px;
+  line-height: 1.35;
+  text-align: center;
+}
+
+#status.visible,
+#banner.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+#status {
+  bottom: 24px;
+  background: rgba(17, 24, 32, 0.84);
+  color: #f7f8fb;
+}
+
+#banner {
+  top: 20px;
+  background: #f7c548;
+  color: #151100;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.32);
+  font-weight: 700;
+}

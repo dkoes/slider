@@ -1,0 +1,8 @@
+{
+  "folder_url": "https://your-tenant.sharepoint.com/:f:/s/example/...",
+  "host": "127.0.0.1",
+  "port": 8788,
+  "sync_interval_seconds": 300,
+  "stale_after_seconds": 1800,
+  "data_dir": "slider_data"
+}

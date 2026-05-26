@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Slider</title>
+    <script>
+      // Set these defaults here. URL parameters named manifest, time, and stale_after override them.
+      window.SLIDER_MANIFEST_URL = "/manifest.json";
+      window.SLIDER_TIME_PER_SLIDE_SECONDS = 30;
+      window.SLIDER_INTERACTIVE_PAUSE_SECONDS = 120;
+      window.SLIDER_SYNC_STALE_AFTER_SECONDS = 1800;
+      window.SLIDER_FOUR_UP = false;
+      window.SLIDER_DEBUG = false;
+    </script>
+    <style>
+__INLINE_CSS__
+    </style>
+  </head>
+  <body>
+    <main id="slider-root" aria-live="polite">
+      <section id="stage" aria-label="Slideshow stage"></section>
+      <button id="previous-slide" class="nav-control nav-control-left" type="button" aria-label="Previous slide">&lsaquo;</button>
+      <button id="next-slide" class="nav-control nav-control-right" type="button" aria-label="Next slide">&rsaquo;</button>
+      <div id="zoom-controls" aria-label="Zoom controls">
+        <button id="zoom-in" class="zoom-control" type="button" aria-label="Zoom in">+</button>
+        <button id="zoom-out" class="zoom-control" type="button" aria-label="Zoom out">&minus;</button>
+      </div>
+      <div id="status" role="status"></div>
+      <div id="banner" role="alert"></div>
+    </main>
+    <script>
+__INLINE_JS__
+    </script>
+  </body>
+</html>

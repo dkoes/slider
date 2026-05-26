@@ -1,0 +1,10 @@
+node_modules/
+build/
+dist/
+slider_data/
+slider_config.json
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+*.spec
