@@ -78,13 +78,16 @@ def main() -> int:
         syncer.sync_once()
         return 0
 
-    thread = threading.Thread(target=sync_loop, args=(syncer, config.sync_interval_seconds), daemon=True)
+    thread = threading.Thread(
+        target=sync_loop,
+        args=(syncer, config.sync_interval_seconds, lambda: launch_windows_chrome_kiosk(config)),
+        daemon=True,
+    )
     thread.start()
 
     server = ThreadingHTTPServer((config.host, config.port), make_handler(config))
     print(f"Slider agent serving http://{config.host}:{config.port}/slider.html")
     print(f"Syncing {config.folder_url}")
-    launch_windows_chrome_kiosk(config)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -172,6 +175,7 @@ def launch_windows_chrome_kiosk(config: AgentConfig) -> None:
     if sys.platform != "win32" or not config.autolaunch:
         return
 
+    print("Attempting to launch Chrome kiosk.")
     chrome_path = find_windows_chrome_path(config.chrome_path)
     if not chrome_path:
         print("Chrome kiosk launch skipped: chrome.exe was not found.", file=sys.stderr)
@@ -223,9 +227,13 @@ def get_slider_url(config: AgentConfig) -> str:
     return f"http://{host}:{config.port}/slider.html"
 
 
-def sync_loop(syncer: "SharePointSyncer", interval_seconds: int) -> None:
+def sync_loop(syncer: "SharePointSyncer", interval_seconds: int, after_first_sync: Any = None) -> None:
+    first_sync = True
     while True:
         syncer.sync_once()
+        if first_sync and after_first_sync:
+            first_sync = False
+            after_first_sync()
         time.sleep(interval_seconds)
 
 
