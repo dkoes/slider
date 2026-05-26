@@ -184,8 +184,6 @@ const liveStreams: Record<LiveStreamMode, { title: string; embedUrl: string }> =
   }
 };
 
-declare const pdfjsLib: PdfJsGlobal | undefined;
-
 start().catch((error: unknown) => {
   showBanner(`Slider failed to start: ${getErrorMessage(error)}`);
 });
@@ -367,7 +365,8 @@ function getConfig(): SliderConfig {
 
 function configurePdfJs(): void {
   const globals = window as Window & SliderGlobals;
-  if (typeof pdfjsLib === "undefined" || !globals.SLIDER_PDF_WORKER_SOURCE) {
+  const pdfJs = getPdfJsLib();
+  if (!pdfJs || !globals.SLIDER_PDF_WORKER_SOURCE) {
     return;
   }
 
@@ -375,7 +374,11 @@ function configurePdfJs(): void {
   // remains a single deployable file with no CDN or sidecar PDF.js assets.
   const workerBlob = new Blob([globals.SLIDER_PDF_WORKER_SOURCE], { type: "text/javascript" });
   pdfWorkerUrl = URL.createObjectURL(workerBlob);
-  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+  pdfJs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+}
+
+function getPdfJsLib(): PdfJsGlobal | undefined {
+  return (globalThis as typeof globalThis & { pdfjsLib?: PdfJsGlobal }).pdfjsLib;
 }
 
 async function refreshSlides(config: SliderConfig): Promise<void> {
@@ -1029,7 +1032,7 @@ function createPdfContent(slide: SlideItem): HTMLElement {
 }
 
 async function renderPdfPage(slide: SlideItem, container: HTMLElement, canvas: HTMLCanvasElement): Promise<void> {
-  if (typeof pdfjsLib === "undefined") {
+  if (!getPdfJsLib()) {
     throw new Error("PDF.js is not available.");
   }
 
@@ -1082,7 +1085,7 @@ async function getRenderedPdfPage(slide: SlideItem, viewportSize: { width: numbe
 }
 
 async function renderPdfPageToCache(slide: SlideItem, viewportSize: { width: number; height: number }): Promise<PdfRenderResult> {
-  if (typeof pdfjsLib === "undefined") {
+  if (!getPdfJsLib()) {
     throw new Error("PDF.js is not available.");
   }
 
@@ -1128,7 +1131,12 @@ function getPdfDocument(slide: SlideItem): Promise<PdfDocumentProxy> {
     return cached;
   }
 
-  const promise = pdfjsLib!.getDocument(slide.url).promise;
+  const pdfJs = getPdfJsLib();
+  if (!pdfJs) {
+    return Promise.reject(new Error("PDF.js is not available."));
+  }
+
+  const promise = pdfJs.getDocument(slide.url).promise;
   pdfDocumentCache.set(key, promise);
   trimPdfDocumentCache();
   void promise.then((documentProxy) => {
@@ -1229,7 +1237,7 @@ function formatBytes(bytes: number): string {
 }
 
 function preloadUpcomingPdfs(): void {
-  if (config.pdfCacheSize <= 0 || typeof pdfjsLib === "undefined") {
+  if (config.pdfCacheSize <= 0 || !getPdfJsLib()) {
     return;
   }
 

@@ -35,8 +35,8 @@ const [template, css, js, agentSource, pdfJs, pdfWorkerJs] = await Promise.all([
   readFile(resolve(root, "src/styles.css"), "utf8"),
   readFile(resolve(jsBuildDir, "app.js"), "utf8"),
   readFile(resolve(root, "scripts/slider_agent.py"), "utf8"),
-  readFile(resolve(root, "node_modules/pdfjs-dist/legacy/build/pdf.min.js"), "utf8"),
-  readFile(resolve(root, "node_modules/pdfjs-dist/legacy/build/pdf.worker.min.js"), "utf8")
+  readFile(resolve(root, "node_modules/pdfjs-dist/legacy/build/pdf.min.mjs"), "utf8"),
+  readFile(resolve(root, "node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs"), "utf8")
 ]);
 
 const sliderConfig = await readOptionalJson(resolve(root, "slider_config.json"));
@@ -47,10 +47,12 @@ const html = template
   .replace("__PDF_WORKER_SOURCE__", () => formatPdfWorkerSource(pdfWorkerJs))
   .replace("__INLINE_CSS__", () => css.trim())
   .replace("__INLINE_JS__", () => js.trim());
-const agent = agentSource.replace(
-  "EMBEDDED_SLIDER_HTML = None",
-  `EMBEDDED_SLIDER_HTML = ${JSON.stringify(html)}`
-);
+const embeddedHtmlAssignment = `EMBEDDED_SLIDER_HTML = base64.b64decode(\n${formatPythonBase64String(html)}\n).decode("utf-8")`;
+const agent = agentSource.replace(/^EMBEDDED_SLIDER_HTML = None$/m, embeddedHtmlAssignment);
+
+if (agent === agentSource) {
+  throw new Error("Could not find EMBEDDED_SLIDER_HTML assignment in slider_agent.py");
+}
 
 await writeFile(resolve(buildDir, "slider_agent.py"), agent, "utf8");
 console.log("Built build/slider_agent.py");
@@ -132,6 +134,12 @@ function formatPdfWorkerSource(workerSource) {
   // PDF.js needs its worker as a URL. Store the source string in the self-contained
   // HTML and let the app create an object URL at runtime.
   return `      window.SLIDER_PDF_WORKER_SOURCE = ${JSON.stringify(workerSource)};`;
+}
+
+function formatPythonBase64String(value) {
+  const encoded = Buffer.from(value, "utf8").toString("base64");
+  const chunks = encoded.match(/.{1,76}/g) || [""];
+  return chunks.map((chunk) => `    ${JSON.stringify(chunk)}`).join("\n");
 }
 
 function firstDefined(...values) {

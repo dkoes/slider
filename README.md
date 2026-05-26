@@ -4,7 +4,7 @@ The built product is a Python slider agent with the slideshow HTML, CSS, and Jav
 
 ## Build
 
-Use Node.js 24 or newer.
+Use Node.js 22.13.0 or newer.
 
 ```sh
 npm install
