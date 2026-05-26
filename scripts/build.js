@@ -100,6 +100,7 @@ function getSliderDefaults(config) {
     ),
     liveStreamMinutes: positiveNumber(config.live_stream_minutes, 30),
     fourUp: booleanValue(firstDefined(config.four_up, config.four), false),
+    panPosters: booleanValue(config.pan_posters, true),
     pdfCacheSize: positiveNumber(firstDefined(config.pdf_cache_size, config.pdf_cache), 200),
     debug: booleanValue(config.debug, false)
   };
@@ -115,6 +116,7 @@ function formatSliderDefaults(defaults) {
     ["SLIDER_SYNC_STALE_AFTER_SECONDS", defaults.syncStaleAfterSeconds],
     ["SLIDER_LIVE_STREAM_MINUTES", defaults.liveStreamMinutes],
     ["SLIDER_FOUR_UP", defaults.fourUp],
+    ["SLIDER_PAN_POSTERS", defaults.panPosters],
     ["SLIDER_PDF_CACHE_SIZE", defaults.pdfCacheSize],
     ["SLIDER_DEBUG", defaults.debug]
   ];

@@ -1,7 +1,8 @@
 type SlideKind = "image" | "pdf" | "html";
 type SyncStatus = "ok" | "syncing" | "error";
 type AutoplayMode = "announcements" | "posters";
-type AppMode = AutoplayMode | "lab" | "poster" | "cats";
+type LiveStreamMode = "cats" | "puppies" | "jellyfish";
+type AppMode = AutoplayMode | "lab" | "poster" | LiveStreamMode;
 
 interface SliderGlobals {
   SLIDER_MANIFEST_URL?: string;
@@ -11,6 +12,7 @@ interface SliderGlobals {
   SLIDER_SYNC_STALE_AFTER_SECONDS?: number;
   SLIDER_LIVE_STREAM_MINUTES?: number;
   SLIDER_FOUR_UP?: boolean;
+  SLIDER_PAN_POSTERS?: boolean;
   SLIDER_PDF_CACHE_SIZE?: number;
   SLIDER_DEBUG?: boolean;
   SLIDER_PDF_WORKER_SOURCE?: string;
@@ -81,6 +83,7 @@ interface SliderConfig {
   syncStaleAfterSeconds: number;
   liveStreamMinutes: number;
   fourUp: boolean;
+  panPosters: boolean;
   pdfCacheSize: number;
   debug: boolean;
 }
@@ -118,6 +121,8 @@ const menuPanel = mustGetElement("menu-panel");
 const announcementsButton = mustGetElement("menu-announcements") as HTMLButtonElement;
 const postersButton = mustGetElement("menu-posters") as HTMLButtonElement;
 const catsButton = mustGetElement("menu-cats") as HTMLButtonElement;
+const puppiesButton = mustGetElement("menu-puppies") as HTMLButtonElement;
+const jellyfishButton = mustGetElement("menu-jellyfish") as HTMLButtonElement;
 const labsMenu = mustGetElement("labs-menu");
 const previousButton = mustGetElement("previous-slide") as HTMLButtonElement;
 const nextButton = mustGetElement("next-slide") as HTMLButtonElement;
@@ -158,6 +163,21 @@ let lastAutoplayMode: AutoplayMode = "announcements";
 let liveStreamEndsAt = 0;
 let liveStreamTimer = 0;
 
+const liveStreams: Record<LiveStreamMode, { title: string; embedUrl: string }> = {
+  cats: {
+    title: "Cats",
+    embedUrl: "https://www.youtube.com/embed/e9C9K8ltDfk?autoplay=1&mute=1&playsinline=1&rel=0"
+  },
+  puppies: {
+    title: "Puppies",
+    embedUrl: "https://www.youtube.com/embed/h-Z0wCdD3dI?autoplay=1&mute=1&playsinline=1&rel=0"
+  },
+  jellyfish: {
+    title: "Jellyfish",
+    embedUrl: "https://www.youtube.com/embed/m1XcdxjVGos?autoplay=1&mute=1&playsinline=1&rel=0"
+  }
+};
+
 declare const pdfjsLib: PdfJsGlobal | undefined;
 
 start().catch((error: unknown) => {
@@ -175,7 +195,7 @@ async function start(): Promise<void> {
   // The slideshow loop advances announcement slides and the randomized poster
   // stream. Lab browsing and selected poster detail views are user-driven modes.
   while (running) {
-    if (appMode === "lab" || appMode === "poster" || appMode === "cats") {
+    if (appMode === "lab" || appMode === "poster" || isLiveStreamMode(appMode)) {
       await sleep(500);
       continue;
     }
@@ -213,14 +233,16 @@ async function start(): Promise<void> {
 function wireControls(): void {
   menuToggle.addEventListener("click", (event) => {
     pauseForInteraction();
-    menuPanel.classList.toggle("open");
+    setMenuOpen(!menuPanel.classList.contains("open"));
     event.stopPropagation();
   });
   menuPanel.addEventListener("pointerdown", (event) => event.stopPropagation());
   menuPanel.addEventListener("click", (event) => event.stopPropagation());
   announcementsButton.addEventListener("click", () => showAnnouncements());
   postersButton.addEventListener("click", () => showPosters());
-  catsButton.addEventListener("click", () => showCats());
+  catsButton.addEventListener("click", () => showLiveStream("cats"));
+  puppiesButton.addEventListener("click", () => showLiveStream("puppies"));
+  jellyfishButton.addEventListener("click", () => showLiveStream("jellyfish"));
   liveStreamReset.addEventListener("click", (event) => {
     event.stopPropagation();
     resetLiveStreamCountdown();
@@ -250,9 +272,14 @@ function wireControls(): void {
   });
   document.addEventListener("pointerdown", () => {
     if (menuPanel.classList.contains("open")) {
-      menuPanel.classList.remove("open");
+      setMenuOpen(false);
     }
   });
+}
+
+function setMenuOpen(open: boolean): void {
+  menuPanel.classList.toggle("open", open);
+  document.body.classList.toggle("menu-open", open);
 }
 
 function getConfig(): SliderConfig {
@@ -279,6 +306,7 @@ function getConfig(): SliderConfig {
   const rawPdfCacheSize = params.get("pdf_cache_size");
   const parsedPdfCacheSize = rawPdfCacheSize ? Number(rawPdfCacheSize) : Number(globals.SLIDER_PDF_CACHE_SIZE);
   const fourUp = parseBooleanParam(params.get("four_up"), Boolean(globals.SLIDER_FOUR_UP));
+  const panPosters = parseBooleanParam(params.get("pan_posters"), globals.SLIDER_PAN_POSTERS ?? true);
 
   return {
     manifestUrl,
@@ -290,6 +318,7 @@ function getConfig(): SliderConfig {
     syncStaleAfterSeconds: Number.isFinite(parsedStaleAfter) && parsedStaleAfter > 0 ? parsedStaleAfter : 1800,
     liveStreamMinutes: Number.isFinite(parsedLiveStreamMinutes) && parsedLiveStreamMinutes > 0 ? parsedLiveStreamMinutes : 30,
     fourUp,
+    panPosters,
     pdfCacheSize: Number.isFinite(parsedPdfCacheSize) && parsedPdfCacheSize >= 0 ? Math.floor(parsedPdfCacheSize) : 200,
     debug: parseBooleanParam(params.get("debug"), Boolean(globals.SLIDER_DEBUG))
   };
@@ -462,7 +491,9 @@ async function showSlide(slide: SlideItem): Promise<void> {
 
 function renderMenu(): void {
   labsMenu.replaceChildren();
-  if (labs.length === 0) {
+  const menuLabs = getIndexedLabs(labs);
+  labsMenu.classList.toggle("multi-column", menuLabs.length > 10);
+  if (menuLabs.length === 0) {
     const empty = document.createElement("div");
     empty.className = "menu-empty";
     empty.textContent = "No labs available";
@@ -470,12 +501,13 @@ function renderMenu(): void {
     return;
   }
 
-  labsMenu.append(createLabMenuList(labs));
+  labsMenu.append(createLabMenuList(menuLabs));
 }
 
 function createLabMenuList(items: LabFolder[]): HTMLElement {
   const list = document.createElement("ul");
   list.className = "lab-menu-list";
+  list.classList.toggle("multi-column", items.length > 10);
   for (const lab of items) {
     const item = document.createElement("li");
     const button = document.createElement("button");
@@ -484,12 +516,17 @@ function createLabMenuList(items: LabFolder[]): HTMLElement {
     button.textContent = lab.name;
     button.addEventListener("click", () => showLab(lab));
     item.append(button);
-    if (lab.children?.length) {
-      item.append(createLabMenuList(lab.children));
+    const children = getIndexedLabs(lab.children || []);
+    if (children.length > 0) {
+      item.append(createLabMenuList(children));
     }
     list.append(item);
   }
   return list;
+}
+
+function getIndexedLabs(items: LabFolder[]): LabFolder[] {
+  return items.filter((lab) => isSlideItem(lab.index));
 }
 
 function showAnnouncements(): void {
@@ -498,7 +535,7 @@ function showAnnouncements(): void {
   stopLiveStreamCountdown();
   posterItems = [];
   posterIndex = -1;
-  menuPanel.classList.remove("open");
+  setMenuOpen(false);
   exitInteractiveMode();
   stage.querySelectorAll(".lab-view").forEach((node) => node.remove());
   activeFourSlides.forEach((node) => node.remove());
@@ -518,7 +555,7 @@ function showPosters(): void {
   stopLiveStreamCountdown();
   posterItems = [];
   posterIndex = -1;
-  menuPanel.classList.remove("open");
+  setMenuOpen(false);
   exitInteractiveMode();
   stage.querySelectorAll(".lab-view").forEach((node) => node.remove());
   activeFourSlides.forEach((node) => node.remove());
@@ -539,10 +576,11 @@ function showPosters(): void {
   }
 }
 
-function showCats(): void {
-  menuPanel.classList.remove("open");
+function showLiveStream(mode: LiveStreamMode): void {
+  const stream = liveStreams[mode];
+  setMenuOpen(false);
   exitInteractiveMode();
-  setAppMode("cats");
+  setAppMode(mode);
   activeSlide?.remove();
   activeSlide = null;
   activeFourSlides.forEach((node) => node.remove());
@@ -552,20 +590,20 @@ function showCats(): void {
 
   const view = document.createElement("article");
   view.className = "cat-stream";
-  view.setAttribute("aria-label", "Cats live stream");
+  view.setAttribute("aria-label", `${stream.title} live stream`);
 
   const frame = document.createElement("iframe");
-  frame.src = "https://www.youtube.com/embed/e9C9K8ltDfk?autoplay=1&mute=1&playsinline=1&rel=0";
-  frame.title = "Cats live stream";
+  frame.src = stream.embedUrl;
+  frame.title = `${stream.title} live stream`;
   frame.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
   frame.allowFullscreen = true;
   view.append(frame);
   stage.append(view);
 
-  // Cats is an interrupting mode. The timer owns the return path to whichever
+  // Livestreams are interrupting modes. The timer owns the return path to whichever
   // autoplay mode was active most recently before the stream was opened.
   resetLiveStreamCountdown();
-  showDebugTitle("Cats");
+  showDebugTitle(stream.title);
 }
 
 function resetLiveStreamCountdown(): void {
@@ -581,7 +619,7 @@ function stopLiveStreamCountdown(): void {
 }
 
 function updateLiveStreamCountdown(): void {
-  if (appMode !== "cats" || liveStreamEndsAt <= 0) {
+  if (!isLiveStreamMode(appMode) || liveStreamEndsAt <= 0) {
     return;
   }
 
@@ -612,7 +650,7 @@ function showLab(lab: LabFolder): void {
   setAppMode("lab");
   posterItems = (lab.items || []).filter(isSlideItem);
   posterIndex = -1;
-  menuPanel.classList.remove("open");
+  setMenuOpen(false);
   pauseForInteraction();
   activeSlide?.remove();
   activeSlide = null;
@@ -624,6 +662,7 @@ function showLab(lab: LabFolder): void {
   // the right. Selecting a poster switches back to fullscreen slide rendering.
   const view = document.createElement("article");
   view.className = "lab-view active";
+  view.classList.toggle("no-posters", posterItems.length === 0);
   view.setAttribute("aria-label", lab.name);
 
   const indexPane = document.createElement("section");
@@ -643,11 +682,14 @@ function showLab(lab: LabFolder): void {
 
   const selector = document.createElement("aside");
   selector.className = "poster-selector";
-  for (const item of posterItems) {
-    selector.append(createPosterSelectorButton(item, posterItems.indexOf(item)));
+  for (let index = 0; index < posterItems.length; index += 1) {
+    selector.append(createPosterSelectorButton(posterItems[index], index));
   }
 
-  view.append(indexPane, selector);
+  view.append(indexPane);
+  if (posterItems.length > 0) {
+    view.append(selector);
+  }
   stage.append(view);
   activeSlide = view;
   activeTransformTarget = null;
@@ -1084,7 +1126,7 @@ function nextAnimationFrame(): Promise<void> {
 }
 
 function setupPosterPan(viewport: HTMLElement, media: HTMLElement, slide: SlideItem): void {
-  if (!isPosterDisplayMode() || (slide.kind !== "image" && slide.kind !== "pdf")) {
+  if (!config.panPosters || !isPosterDisplayMode() || (slide.kind !== "image" && slide.kind !== "pdf")) {
     return;
   }
 
@@ -1249,7 +1291,12 @@ function setAppMode(mode: AppMode): void {
   appMode = mode;
   document.body.classList.toggle("lab-mode", mode === "lab");
   document.body.classList.toggle("cat-mode", mode === "cats");
+  document.body.classList.toggle("live-stream-mode", isLiveStreamMode(mode));
   document.body.classList.toggle("four-mode", config.fourUp && mode === "announcements");
+}
+
+function isLiveStreamMode(mode: AppMode): mode is LiveStreamMode {
+  return mode === "cats" || mode === "puppies" || mode === "jellyfish";
 }
 
 function exitInteractiveMode(): void {

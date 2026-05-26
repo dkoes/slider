@@ -238,6 +238,7 @@ body {
 }
 
 .menu-panel {
+  --lab-menu-column-width: 180px;
   position: fixed;
   top: 74px;
   left: 18px;
@@ -322,6 +323,20 @@ body {
   transition: opacity 140ms ease, transform 140ms ease;
 }
 
+.labs-menu.multi-column,
+.lab-menu-list .lab-menu-list.multi-column {
+  width: auto;
+  max-width: calc(100vw - 296px);
+}
+
+.lab-menu-list.multi-column {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: var(--lab-menu-column-width);
+  grid-template-rows: repeat(10, minmax(38px, auto));
+  align-items: stretch;
+}
+
 .menu-section:hover > .labs-menu,
 .menu-section:focus-within > .labs-menu,
 .lab-menu-list li:hover > .lab-menu-list,
@@ -394,6 +409,10 @@ body {
   background: #05070a;
 }
 
+.live-stream-mode.menu-open .cat-stream iframe {
+  pointer-events: none;
+}
+
 .live-stream-countdown {
   position: fixed;
   right: 18px;
@@ -411,12 +430,17 @@ body {
   font: inherit;
 }
 
-.cat-mode .live-stream-countdown {
+.live-stream-mode .live-stream-countdown {
   display: flex;
 }
 
-.cat-mode .nav-control,
-.cat-mode .zoom-control {
+.live-stream-mode .menu-toggle {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.live-stream-mode .nav-control,
+.live-stream-mode .zoom-control {
   opacity: 0;
   pointer-events: none;
 }
@@ -445,10 +469,18 @@ body {
   background: #05070a;
 }
 
+.lab-view.no-posters {
+  grid-template-columns: 1fr;
+}
+
 .lab-index {
   min-width: 0;
   min-height: 0;
   border-right: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.lab-view.no-posters .lab-index {
+  border-right: 0;
 }
 
 .lab-index iframe {

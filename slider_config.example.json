@@ -11,6 +11,7 @@
   "interactive_pause_seconds": 120,
   "live_stream_minutes": 30,
   "four_up": false,
+  "pan_posters": true,
   "pdf_cache_size": 200,
   "debug": false
 }

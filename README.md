@@ -31,7 +31,7 @@ Edit `slider_config.json`. The example file lists every supported setting and it
 }
 ```
 
-`slider_config.json` is ignored by git so private or environment-specific folder URLs are not committed. Agent settings are read when the Python agent starts. App settings, such as `time_per_slide_seconds`, `poster_time_seconds`, `interactive_pause_seconds`, `four_up`, `pdf_cache_size`, and `debug`, are embedded as defaults when you run `npm run build`; URL parameters still override them at runtime.
+`slider_config.json` is ignored by git so private or environment-specific folder URLs are not committed. Agent settings are read when the Python agent starts. App settings, such as `time_per_slide_seconds`, `poster_time_seconds`, `interactive_pause_seconds`, `four_up`, `pan_posters`, `pdf_cache_size`, and `debug`, are embedded as defaults when you run `npm run build`; URL parameters still override them at runtime.
 
 You can also provide core agent settings with command-line flags or environment variables, such as `--folder` or `SLIDER_FOLDER_URL`.
 
@@ -68,6 +68,12 @@ Announcement slides use `time_per_slide_seconds` seconds per slide. Posters use 
 http://127.0.0.1:8788/slider.html?time_per_slide_seconds=30&poster_time_seconds=90
 ```
 
+Poster panning is enabled by default. Disable it with:
+
+```text
+http://127.0.0.1:8788/slider.html?pan_posters=0
+```
+
 To show four slides at once in equal quarters, add:
 
 ```text
@@ -81,11 +87,11 @@ If the shared folder contains a `Labs` folder, the agent recursively syncs its s
 - `Announcements`: the default slideshow from the root folder
 - `Posters`: a randomized slideshow of all non-index PNG/PDF/HTML files under `Labs`
 - `Labs`: a hierarchical list of lab folders
-- `Cats`: a fullscreen YouTube cat livestream with a countdown timer
+- `Cats`, `Puppies`, and `Jellyfish`: fullscreen YouTube livestreams with a countdown timer
 
 Each lab folder can include an `index.html` file plus PNG/PDF/HTML poster files. Selecting a lab shows `index.html` on the left two-thirds of the screen and a scrollable poster selector on the right. Selecting a poster opens it full-screen with the normal interactive navigation and zoom controls.
 
-The `Cats` stream runs for `live_stream_minutes` before returning to whichever autoplay mode, `Announcements` or `Posters`, was running most recently.
+Livestreams run for `live_stream_minutes` before returning to whichever autoplay mode, `Announcements` or `Posters`, was running most recently.
 
 ## Development
 
