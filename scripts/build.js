@@ -41,6 +41,7 @@ const [template, css, js, agentSource, pdfJs, pdfWorkerJs] = await Promise.all([
 
 const sliderConfig = await readOptionalJson(resolve(root, "slider_config.json"));
 const sliderDefaults = getSliderDefaults(sliderConfig);
+const agentDefaults = getAgentDefaults(sliderConfig);
 const html = template
   .replace("__SLIDER_DEFAULTS__", () => formatSliderDefaults(sliderDefaults))
   .replace("__INLINE_PDF_JS__", () => pdfJs.trim())
@@ -48,7 +49,8 @@ const html = template
   .replace("__INLINE_CSS__", () => css.trim())
   .replace("__INLINE_JS__", () => js.trim());
 const embeddedHtmlAssignment = `EMBEDDED_SLIDER_HTML = base64.b64decode(\n${formatPythonBase64String(html)}\n).decode("utf-8")`;
-const agent = agentSource.replace(/^EMBEDDED_SLIDER_HTML = None$/m, embeddedHtmlAssignment);
+const agent = formatAgentDefaults(agentSource, agentDefaults)
+  .replace(/^EMBEDDED_SLIDER_HTML = None$/m, embeddedHtmlAssignment);
 
 if (agent === agentSource) {
   throw new Error("Could not find EMBEDDED_SLIDER_HTML assignment in slider_agent.py");
@@ -109,6 +111,37 @@ function getSliderDefaults(config) {
   };
 }
 
+function getAgentDefaults(config) {
+  return {
+    folderUrl: stringValue(config.folder_url, ""),
+    host: stringValue(config.host, "127.0.0.1"),
+    port: positiveInteger(config.port, 8788),
+    syncIntervalSeconds: positiveInteger(config.sync_interval_seconds, 120),
+    staleAfterSeconds: positiveInteger(
+      firstDefined(config.stale_after_seconds, config.sync_stale_after_seconds, config.stale_after),
+      1800
+    ),
+    dataDir: stringValue(config.data_dir, "slider_data"),
+    autolaunch: booleanValue(firstDefined(config.autolaunch, config.launch_chrome_kiosk), true),
+    chromePath: stringValue(config.chrome_path, "")
+  };
+}
+
+function formatAgentDefaults(source, defaults) {
+  return replacePythonConstant(source, "DEFAULT_FOLDER_URL", defaults.folderUrl)
+    .replace(/^DEFAULT_HOST = .+$/m, `DEFAULT_HOST = ${JSON.stringify(defaults.host)}`)
+    .replace(/^DEFAULT_PORT = .+$/m, `DEFAULT_PORT = ${JSON.stringify(defaults.port)}`)
+    .replace(/^DEFAULT_SYNC_INTERVAL_SECONDS = .+$/m, `DEFAULT_SYNC_INTERVAL_SECONDS = ${JSON.stringify(defaults.syncIntervalSeconds)}`)
+    .replace(/^DEFAULT_STALE_AFTER_SECONDS = .+$/m, `DEFAULT_STALE_AFTER_SECONDS = ${JSON.stringify(defaults.staleAfterSeconds)}`)
+    .replace(/^DEFAULT_DATA_DIR = .+$/m, `DEFAULT_DATA_DIR = ${JSON.stringify(defaults.dataDir)}`)
+    .replace(/^DEFAULT_AUTOLAUNCH = .+$/m, `DEFAULT_AUTOLAUNCH = ${defaults.autolaunch ? "True" : "False"}`)
+    .replace(/^DEFAULT_CHROME_PATH = .+$/m, `DEFAULT_CHROME_PATH = ${JSON.stringify(defaults.chromePath)}`);
+}
+
+function replacePythonConstant(source, name, value) {
+  return source.replace(new RegExp(`^${name} = .+$`, "m"), `${name} = ${JSON.stringify(value)}`);
+}
+
 function formatSliderDefaults(defaults) {
   // These are build-time defaults. Runtime URL parameters remain the final override.
   const assignments = [
@@ -153,6 +186,11 @@ function stringValue(value, fallback) {
 function positiveNumber(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function positiveInteger(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
 }
 
 function fractionValue(value, fallback) {

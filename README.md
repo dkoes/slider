@@ -123,7 +123,8 @@ Refresh the browser after a rebuild to pick up embedded HTML/JS/CSS changes.
 The agent uses only the Python standard library. For a Windows deployment that does not require installing Python, package it with PyInstaller:
 
 ```sh
+npm run build
 pyinstaller --onefile build/slider_agent.py
 ```
 
-No separate `slider.html` is needed. The executable creates and updates `slider_data/` next to where it runs unless `--data-dir` is provided.
+No separate `slider.html` is needed. The `npm run build` step embeds both the slider UI and the current `slider_config.json` defaults into `build/slider_agent.py`. A `slider_config.json` next to the executable, environment variables, or command-line flags still override those embedded defaults at runtime. The executable creates and updates `slider_data/` next to where it runs unless `--data-dir` is provided.

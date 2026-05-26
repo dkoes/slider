@@ -36,9 +36,13 @@ SUPPORTED_EXTENSIONS = {
 }
 
 DEFAULT_FOLDER_URL = ""
+DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8788
 DEFAULT_SYNC_INTERVAL_SECONDS = 120
 DEFAULT_STALE_AFTER_SECONDS = 1800
+DEFAULT_DATA_DIR = "slider_data"
+DEFAULT_AUTOLAUNCH = True
+DEFAULT_CHROME_PATH = ""
 EMBEDDED_SLIDER_HTML = None
 
 
@@ -99,12 +103,12 @@ def main() -> int:
 
 
 def parse_args() -> AgentConfig:
-    root = Path(__file__).resolve().parents[1]
-    default_data_dir = root / "slider_data"
+    root = get_app_root()
+    default_data_dir = resolve_config_path(DEFAULT_DATA_DIR, root)
     local_config = read_json(root / "slider_config.json")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--folder", default=get_config_value(local_config, "folder_url", "SLIDER_FOLDER_URL", DEFAULT_FOLDER_URL))
-    parser.add_argument("--host", default=get_config_value(local_config, "host", "SLIDER_HOST", "127.0.0.1"))
+    parser.add_argument("--host", default=get_config_value(local_config, "host", "SLIDER_HOST", DEFAULT_HOST))
     parser.add_argument("--port", type=int, default=int(get_config_value(local_config, "port", "SLIDER_PORT", DEFAULT_PORT)))
     parser.add_argument("--web-root", type=Path, default=root / "dist")
     parser.add_argument("--data-dir", type=Path, default=Path(get_config_value(local_config, "data_dir", "SLIDER_DATA_DIR", default_data_dir)))
@@ -112,7 +116,7 @@ def parse_args() -> AgentConfig:
     parser.add_argument("--stale-after", type=int, default=int(get_config_value(local_config, "stale_after_seconds", "SLIDER_STALE_AFTER_SECONDS", DEFAULT_STALE_AFTER_SECONDS)))
     parser.add_argument("--autolaunch", action=argparse.BooleanOptionalAction, default=get_autolaunch_config(local_config), help="On Windows, launch Chrome in kiosk mode after the server starts.")
     parser.add_argument("--launch-chrome-kiosk", dest="autolaunch", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
-    parser.add_argument("--chrome-path", default=get_config_value(local_config, "chrome_path", "SLIDER_CHROME_PATH", ""))
+    parser.add_argument("--chrome-path", default=get_config_value(local_config, "chrome_path", "SLIDER_CHROME_PATH", DEFAULT_CHROME_PATH))
     parser.add_argument("--once", action="store_true", help="Run one sync and exit.")
     args = parser.parse_args()
 
@@ -128,6 +132,18 @@ def parse_args() -> AgentConfig:
         chrome_path=args.chrome_path,
         once=args.once,
     )
+
+
+def get_app_root() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+
+    return Path(__file__).resolve().parents[1]
+
+
+def resolve_config_path(value: str, root: Path) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else root / path
 
 
 def get_config_value(config: dict[str, Any], key: str, env_name: str, fallback: Any) -> str:
@@ -162,7 +178,7 @@ def get_autolaunch_config(config: dict[str, Any]) -> bool:
     if config.get("autolaunch") not in (None, ""):
         return parse_bool(config["autolaunch"])
 
-    return get_config_bool(config, "launch_chrome_kiosk", "SLIDER_LAUNCH_CHROME_KIOSK", True)
+    return get_config_bool(config, "launch_chrome_kiosk", "SLIDER_LAUNCH_CHROME_KIOSK", DEFAULT_AUTOLAUNCH)
 
 
 def parse_bool(value: Any) -> bool:
