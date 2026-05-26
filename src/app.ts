@@ -126,6 +126,8 @@ const postersButton = mustGetElement("menu-posters") as HTMLButtonElement;
 const catsButton = mustGetElement("menu-cats") as HTMLButtonElement;
 const puppiesButton = mustGetElement("menu-puppies") as HTMLButtonElement;
 const jellyfishButton = mustGetElement("menu-jellyfish") as HTMLButtonElement;
+const fullscreenDivider = mustGetElement("fullscreen-divider");
+const fullscreenButton = mustGetElement("menu-fullscreen") as HTMLButtonElement;
 const labsMenu = mustGetElement("labs-menu");
 const previousButton = mustGetElement("previous-slide") as HTMLButtonElement;
 const nextButton = mustGetElement("next-slide") as HTMLButtonElement;
@@ -165,6 +167,7 @@ let pdfDocumentCache = new Map<string, Promise<PdfDocumentProxy>>();
 let lastAutoplayMode: AutoplayMode = "announcements";
 let liveStreamEndsAt = 0;
 let liveStreamTimer = 0;
+let sizingRefreshToken = 0;
 
 const liveStreams: Record<LiveStreamMode, { title: string; embedUrl: string }> = {
   cats: {
@@ -246,6 +249,9 @@ function wireControls(): void {
   catsButton.addEventListener("click", () => showLiveStream("cats"));
   puppiesButton.addEventListener("click", () => showLiveStream("puppies"));
   jellyfishButton.addEventListener("click", () => showLiveStream("jellyfish"));
+  fullscreenButton.addEventListener("click", () => {
+    void enterFullscreen();
+  });
   liveStreamReset.addEventListener("click", (event) => {
     event.stopPropagation();
     resetLiveStreamCountdown();
@@ -273,16 +279,45 @@ function wireControls(): void {
       zoomAt(0.8);
     }
   });
+  document.addEventListener("fullscreenchange", () => {
+    updateFullscreenMenu();
+    void refreshCurrentSlideSizing();
+  });
   document.addEventListener("pointerdown", () => {
     if (menuPanel.classList.contains("open")) {
       setMenuOpen(false);
     }
   });
+  updateFullscreenMenu();
 }
 
 function setMenuOpen(open: boolean): void {
   menuPanel.classList.toggle("open", open);
   document.body.classList.toggle("menu-open", open);
+  if (open) {
+    updateFullscreenMenu();
+  }
+}
+
+async function enterFullscreen(): Promise<void> {
+  if (!document.fullscreenEnabled || document.fullscreenElement) {
+    updateFullscreenMenu();
+    return;
+  }
+
+  setMenuOpen(false);
+  try {
+    await document.documentElement.requestFullscreen();
+  } catch (error: unknown) {
+    showBanner(`Unable to enter fullscreen: ${getErrorMessage(error)}`);
+    updateFullscreenMenu();
+  }
+}
+
+function updateFullscreenMenu(): void {
+  const hidden = !document.fullscreenEnabled || Boolean(document.fullscreenElement);
+  fullscreenDivider.hidden = hidden;
+  fullscreenButton.hidden = hidden;
 }
 
 function getConfig(): SliderConfig {
@@ -493,6 +528,40 @@ async function showSlide(slide: SlideItem): Promise<void> {
   window.setTimeout(() => {
     previous?.remove();
   }, 700);
+}
+
+async function refreshCurrentSlideSizing(): Promise<void> {
+  const token = ++sizingRefreshToken;
+  await waitForPaint();
+  if (token !== sizingRefreshToken) {
+    return;
+  }
+
+  if (appMode === "announcements" && config.fourUp) {
+    initializeFourSlides();
+    return;
+  }
+
+  const slide = getCurrentSlideItem();
+  if (slide) {
+    await showSlide(slide);
+  }
+}
+
+function getCurrentSlideItem(): SlideItem | null {
+  if (appMode === "announcements") {
+    return slides[slideIndex] || null;
+  }
+
+  if (appMode === "posters") {
+    return posterSlideshowItems[posterSlideshowIndex] || null;
+  }
+
+  if (appMode === "poster") {
+    return posterItems[posterIndex] || null;
+  }
+
+  return null;
 }
 
 function renderMenu(): void {
