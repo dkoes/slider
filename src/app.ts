@@ -631,7 +631,8 @@ function createInteractiveViewport(slide: SlideItem): HTMLElement {
 
   const content = document.createElement("div");
   content.className = "slide-content";
-  content.append(createSlideContent(slide));
+  const media = createSlideContent(slide);
+  content.append(media);
   viewport.append(content);
   wireViewportInteractions(viewport);
 
@@ -650,7 +651,7 @@ function createSlideContent(slide: SlideItem): HTMLElement {
 
   const frame = document.createElement("iframe");
   frame.src = slide.kind === "pdf"
-    ? `${slide.url}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`
+    ? getPdfViewerUrl(slide.url)
     : slide.url;
   frame.title = slide.name;
 
@@ -659,6 +660,10 @@ function createSlideContent(slide: SlideItem): HTMLElement {
   }
 
   return frame;
+}
+
+function getPdfViewerUrl(url: string): string {
+  return `${url}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`;
 }
 
 function wireViewportInteractions(viewport: HTMLElement): void {
