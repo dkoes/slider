@@ -15,6 +15,7 @@ interface SliderGlobals {
   SLIDER_PAN_POSTERS?: boolean;
   SLIDER_PAN_FRACTION?: number;
   SLIDER_PDF_CACHE_SIZE?: number;
+  SLIDER_PDF_RENDER_CACHE?: boolean;
   SLIDER_DEBUG?: boolean;
   SLIDER_PDF_WORKER_SOURCE?: string;
 }
@@ -88,6 +89,7 @@ interface SliderConfig {
   panPosters: boolean;
   panFraction: number;
   pdfCacheSize: number;
+  pdfRenderCache: boolean;
   debug: boolean;
 }
 
@@ -173,6 +175,9 @@ let pdfZoomRenderTimer = 0;
 let pdfZoomRenderToken = 0;
 let pdfZoomRenderTarget: HTMLElement | null = null;
 let pdfZoomRenderScale = 1;
+let pdfPrefetchIdleHandle = 0;
+let pdfPrefetchTimer = 0;
+let pdfPrefetchToken = 0;
 let lastAutoplayMode: AutoplayMode = "announcements";
 let liveStreamEndsAt = 0;
 let liveStreamTimer = 0;
@@ -355,6 +360,7 @@ function getConfig(): SliderConfig {
     : Number(globals.SLIDER_LIVE_STREAM_MINUTES);
   const rawPdfCacheSize = params.get("pdf_cache_size");
   const parsedPdfCacheSize = rawPdfCacheSize ? Number(rawPdfCacheSize) : Number(globals.SLIDER_PDF_CACHE_SIZE);
+  const pdfRenderCache = parseBooleanParam(params.get("pdf_render_cache"), globals.SLIDER_PDF_RENDER_CACHE ?? false);
   const fourUp = parseBooleanParam(params.get("four_up"), Boolean(globals.SLIDER_FOUR_UP));
   const panPosters = parseBooleanParam(params.get("pan_posters"), globals.SLIDER_PAN_POSTERS ?? true);
   const rawPanFraction = params.get("pan_fraction");
@@ -373,6 +379,7 @@ function getConfig(): SliderConfig {
     panPosters,
     panFraction: Number.isFinite(parsedPanFraction) && parsedPanFraction > 0 && parsedPanFraction <= 1 ? parsedPanFraction : 0.85,
     pdfCacheSize: Number.isFinite(parsedPdfCacheSize) && parsedPdfCacheSize >= 0 ? Math.floor(parsedPdfCacheSize) : 200,
+    pdfRenderCache,
     debug: parseBooleanParam(params.get("debug"), Boolean(globals.SLIDER_DEBUG))
   };
 }
@@ -531,6 +538,7 @@ async function showSlide(slide: SlideItem): Promise<void> {
   next.append(createInteractiveViewport(slide));
   stage.append(next);
 
+  await waitForSlideReady(next);
   await waitForPaint();
   activeSlide?.classList.remove("active");
   activeSlide?.classList.add("exiting");
@@ -545,6 +553,65 @@ async function showSlide(slide: SlideItem): Promise<void> {
   window.setTimeout(() => {
     previous?.remove();
   }, 700);
+}
+
+async function waitForSlideReady(slideNode: HTMLElement): Promise<void> {
+  const media = slideNode.querySelector(".slide-content > img, .slide-content > iframe, .pdfjs-page") as HTMLElement | null;
+  if (!media) {
+    return;
+  }
+
+  await withTimeout(waitForMediaReady(media), 4000);
+}
+
+function waitForMediaReady(media: HTMLElement): Promise<void> {
+  if (media instanceof HTMLImageElement) {
+    if (media.complete && media.naturalWidth > 0) {
+      return Promise.resolve();
+    }
+
+    return waitForEvent(media, ["load", "error"]);
+  }
+
+  if (media instanceof HTMLIFrameElement) {
+    try {
+      if (media.contentDocument?.readyState === "complete") {
+        return Promise.resolve();
+      }
+    } catch {
+      // Cross-origin frames cannot expose readiness; wait for the frame load event.
+    }
+
+    return waitForEvent(media, ["load", "error"]);
+  }
+
+  if (media.classList.contains("pdfjs-page")) {
+    if (media.dataset.renderHeight) {
+      return Promise.resolve();
+    }
+
+    return waitForEvent(media, ["pdf-rendered"]);
+  }
+
+  return Promise.resolve();
+}
+
+function waitForEvent(target: EventTarget, names: string[]): Promise<void> {
+  return new Promise((resolve) => {
+    const cleanup = () => names.forEach((name) => target.removeEventListener(name, onEvent));
+    const onEvent = () => {
+      cleanup();
+      resolve();
+    };
+    names.forEach((name) => target.addEventListener(name, onEvent, { once: true }));
+  });
+}
+
+function withTimeout(promise: Promise<void>, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timeout = window.setTimeout(resolve, timeoutMs);
+    promise.then(resolve).catch(resolve).finally(() => window.clearTimeout(timeout));
+  });
 }
 
 async function refreshCurrentSlideSizing(): Promise<void> {
@@ -687,6 +754,7 @@ function showLiveStream(mode: LiveStreamMode): void {
   const frame = document.createElement("iframe");
   frame.src = stream.embedUrl;
   frame.title = `${stream.title} live stream`;
+  frame.tabIndex = -1;
   frame.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
   frame.allowFullscreen = true;
   view.append(frame);
@@ -1118,6 +1186,10 @@ function applyRenderedPdfPage(
 }
 
 async function getRenderedPdfPage(slide: SlideItem, viewportSize: { width: number; height: number }): Promise<PdfRenderResult> {
+  if (!config.pdfRenderCache) {
+    return renderPdfPageToCanvas(slide, viewportSize);
+  }
+
   const key = getPdfCacheKey(slide, viewportSize);
   const cached = pdfRenderCache.get(key);
   if (cached) {
@@ -1232,7 +1304,7 @@ function getPdfCacheKey(slide: SlideItem, viewportSize: { width: number; height:
 }
 
 function trimPdfRenderCache(): void {
-  if (config.pdfCacheSize <= 0) {
+  if (!config.pdfRenderCache || config.pdfCacheSize <= 0) {
     pdfRenderCache.clear();
     return;
   }
@@ -1311,9 +1383,56 @@ function preloadUpcomingPdfs(): void {
     return;
   }
 
-  void getRenderedPdfPage(nextPdf, getExpectedPdfViewportSize()).catch(() => {
-    // The visible render path reports failures; background preloads should stay quiet.
+  const token = ++pdfPrefetchToken;
+  cancelScheduledPdfPrefetch();
+  scheduleIdlePdfPrefetch(() => {
+    if (token !== pdfPrefetchToken) {
+      return;
+    }
+
+    void prefetchPdf(nextPdf).catch(() => {
+      // The visible render path reports failures; background preloads should stay quiet.
+    });
   });
+}
+
+function scheduleIdlePdfPrefetch(callback: () => void): void {
+  const idleWindow = window as Window & {
+    requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+    cancelIdleCallback?: (handle: number) => void;
+  };
+
+  if (idleWindow.requestIdleCallback) {
+    pdfPrefetchIdleHandle = idleWindow.requestIdleCallback(() => {
+      pdfPrefetchIdleHandle = 0;
+      callback();
+    }, { timeout: 2500 });
+    return;
+  }
+
+  pdfPrefetchTimer = globalThis.setTimeout(callback, 500);
+}
+
+function cancelScheduledPdfPrefetch(): void {
+  if (pdfPrefetchIdleHandle) {
+    const idleWindow = window as Window & { cancelIdleCallback?: (handle: number) => void };
+    idleWindow.cancelIdleCallback?.(pdfPrefetchIdleHandle);
+    pdfPrefetchIdleHandle = 0;
+  }
+
+  if (pdfPrefetchTimer) {
+    globalThis.clearTimeout(pdfPrefetchTimer);
+    pdfPrefetchTimer = 0;
+  }
+}
+
+async function prefetchPdf(slide: SlideItem): Promise<void> {
+  await getPdfDocument(slide);
+  if (!config.pdfRenderCache) {
+    return;
+  }
+
+  await getRenderedPdfPage(slide, getExpectedPdfViewportSize());
 }
 
 function getNextPdfToPreload(): SlideItem | null {

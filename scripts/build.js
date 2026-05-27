@@ -108,6 +108,7 @@ function getSliderDefaults(config) {
     panPosters: booleanValue(config.pan_posters, true),
     panFraction: fractionValue(config.pan_fraction, 0.85),
     pdfCacheSize: positiveNumber(firstDefined(config.pdf_cache_size, config.pdf_cache), 200),
+    pdfRenderCache: booleanValue(firstDefined(config.pdf_render_cache, config.render_cache), false),
     debug: booleanValue(config.debug, false)
   };
 }
@@ -156,6 +157,7 @@ function formatSliderDefaults(defaults) {
     ["SLIDER_PAN_POSTERS", defaults.panPosters],
     ["SLIDER_PAN_FRACTION", defaults.panFraction],
     ["SLIDER_PDF_CACHE_SIZE", defaults.pdfCacheSize],
+    ["SLIDER_PDF_RENDER_CACHE", defaults.pdfRenderCache],
     ["SLIDER_DEBUG", defaults.debug]
   ];
 

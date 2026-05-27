@@ -426,9 +426,6 @@ body {
   height: 100%;
   border: 0;
   background: #05070a;
-}
-
-.live-stream-mode.menu-open .cat-stream iframe {
   pointer-events: none;
 }
 

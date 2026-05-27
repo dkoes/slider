@@ -16,5 +16,6 @@
   "pan_posters": true,
   "pan_fraction": 0.75,
   "pdf_cache_size": 200,
+  "pdf_render_cache": false,
   "debug": false
 }
