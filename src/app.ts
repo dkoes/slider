@@ -104,6 +104,11 @@ interface PdfRenderCacheEntry {
   promise: Promise<PdfRenderResult>;
 }
 
+interface PdfRenderOptions {
+  outputScale?: number;
+  useCache?: boolean;
+}
+
 interface ViewTransform {
   scale: number;
   x: number;
@@ -164,6 +169,8 @@ let config: SliderConfig;
 let pdfWorkerUrl = "";
 let pdfRenderCache = new Map<string, PdfRenderCacheEntry>();
 let pdfDocumentCache = new Map<string, Promise<PdfDocumentProxy>>();
+let pdfZoomRenderTimer = 0;
+let pdfZoomRenderToken = 0;
 let lastAutoplayMode: AutoplayMode = "announcements";
 let liveStreamEndsAt = 0;
 let liveStreamTimer = 0;
@@ -731,15 +738,16 @@ function formatCountdown(remainingMs: number): string {
 
 function showLab(lab: LabFolder): void {
   setAppMode("lab");
+  stopLiveStreamCountdown();
   posterItems = (lab.items || []).filter(isSlideItem);
   posterIndex = -1;
   setMenuOpen(false);
-  pauseForInteraction();
+  exitInteractiveMode();
   activeSlide?.remove();
   activeSlide = null;
   activeFourSlides.forEach((node) => node.remove());
   activeFourSlides = [];
-  stage.querySelectorAll(".slide, .lab-view").forEach((node) => node.remove());
+  stage.querySelectorAll(".slide, .lab-view, .cat-stream").forEach((node) => node.remove());
 
   // Lab mode is a split browsing view: index.html on the left, poster chooser on
   // the right. Selecting a poster switches back to fullscreen slide rendering.
@@ -968,6 +976,9 @@ function createInteractiveViewport(slide: SlideItem): HTMLElement {
   const media = createSlideContent(slide);
   content.append(media);
   viewport.append(content);
+  if (slide.kind === "html" && media instanceof HTMLIFrameElement) {
+    wireHtmlFrameInteractions(viewport, media);
+  }
   setupPosterPan(viewport, media, slide);
   wireViewportInteractions(viewport);
 
@@ -1019,6 +1030,27 @@ function disableIframeScrolling(frame: HTMLIFrameElement): void {
   });
 }
 
+function wireHtmlFrameInteractions(viewport: HTMLElement, frame: HTMLIFrameElement): void {
+  const showParentControls = () => {
+    pauseForInteraction();
+    setActiveTransformTarget(viewport);
+  };
+
+  frame.addEventListener("load", () => {
+    try {
+      const frameDocument = frame.contentDocument;
+      if (!frameDocument) {
+        return;
+      }
+
+      frameDocument.addEventListener("pointerdown", showParentControls, { capture: true });
+    } catch {
+      // Cross-origin HTML slides can receive clicks, but the parent cannot observe
+      // their document events without cooperation from the embedded page.
+    }
+  });
+}
+
 function createPdfContent(slide: SlideItem): HTMLElement {
   const container = document.createElement("div");
   container.className = "pdfjs-page";
@@ -1036,13 +1068,34 @@ function createPdfContent(slide: SlideItem): HTMLElement {
   return container;
 }
 
-async function renderPdfPage(slide: SlideItem, container: HTMLElement, canvas: HTMLCanvasElement): Promise<void> {
+async function renderPdfPage(
+  slide: SlideItem,
+  container: HTMLElement,
+  canvas: HTMLCanvasElement,
+  options: PdfRenderOptions = {}
+): Promise<void> {
   if (!getPdfJsLib()) {
     throw new Error("PDF.js is not available.");
   }
 
   const viewportSize = await getPdfViewportSize(container);
-  const rendered = await getRenderedPdfPage(slide, viewportSize);
+  const rendered = options.useCache === false
+    ? await renderPdfPageToCanvas(slide, viewportSize, options.outputScale || 1)
+    : await getRenderedPdfPage(slide, viewportSize);
+
+  applyRenderedPdfPage(rendered, container, canvas, options.outputScale || 1);
+}
+
+function applyRenderedPdfPage(
+  rendered: PdfRenderResult,
+  container: HTMLElement,
+  canvas: HTMLCanvasElement,
+  outputScale = 1
+): void {
+  const currentScale = Number(container.dataset.renderScale || "0");
+  if (currentScale > outputScale + 0.05) {
+    return;
+  }
 
   canvas.width = rendered.canvas.width;
   canvas.height = rendered.canvas.height;
@@ -1058,6 +1111,7 @@ async function renderPdfPage(slide: SlideItem, container: HTMLElement, canvas: H
   }
 
   context.drawImage(rendered.canvas, 0, 0);
+  container.dataset.renderScale = String(outputScale);
   container.dispatchEvent(new Event("pdf-rendered"));
 }
 
@@ -1072,7 +1126,7 @@ async function getRenderedPdfPage(slide: SlideItem, viewportSize: { width: numbe
 
   const entry: PdfRenderCacheEntry = {
     key,
-    promise: renderPdfPageToCache(slide, viewportSize)
+    promise: renderPdfPageToCanvas(slide, viewportSize)
   };
   pdfRenderCache.set(key, entry);
   trimPdfRenderCache();
@@ -1089,7 +1143,11 @@ async function getRenderedPdfPage(slide: SlideItem, viewportSize: { width: numbe
   return entry.promise;
 }
 
-async function renderPdfPageToCache(slide: SlideItem, viewportSize: { width: number; height: number }): Promise<PdfRenderResult> {
+async function renderPdfPageToCanvas(
+  slide: SlideItem,
+  viewportSize: { width: number; height: number },
+  outputScale = 1
+): Promise<PdfRenderResult> {
   if (!getPdfJsLib()) {
     throw new Error("PDF.js is not available.");
   }
@@ -1102,7 +1160,7 @@ async function renderPdfPageToCache(slide: SlideItem, viewportSize: { width: num
   const fitScale = Math.min(viewportWidth / baseViewport.width, viewportHeight / baseViewport.height);
   const fullWidthScale = viewportWidth / baseViewport.width;
   const renderScale = Math.max(fitScale, isPosterDisplayMode() ? fullWidthScale : fitScale);
-  const renderViewport = page.getViewport({ scale: renderScale * window.devicePixelRatio });
+  const renderViewport = page.getViewport({ scale: renderScale * window.devicePixelRatio * outputScale });
   const cssWidth = baseViewport.width * renderScale;
   const cssHeight = baseViewport.height * renderScale;
   const fitWidth = baseViewport.width * fitScale;
@@ -1450,6 +1508,7 @@ function updateGesture(): void {
   }
 
   applyTransform();
+  schedulePosterPdfZoomRender();
 }
 
 function getDistance(a: PointerState, b: PointerState): number {
@@ -1516,6 +1575,10 @@ function getDefaultTransform(): ViewTransform {
 }
 
 function zoomAt(factor: number, clientX: number = window.innerWidth / 2, clientY: number = window.innerHeight / 2): void {
+  if (appMode === "lab") {
+    return;
+  }
+
   if (!activeTransformTarget) {
     return;
   }
@@ -1534,6 +1597,7 @@ function zoomAt(factor: number, clientX: number = window.innerWidth / 2, clientY
     y: (activeTransform.y - (clientY - centerY)) * scaleChange + (clientY - centerY)
   });
   applyTransform();
+  schedulePosterPdfZoomRender();
 }
 
 function clampTransform(transform: ViewTransform): ViewTransform {
@@ -1558,6 +1622,51 @@ function applyTransform(): void {
 
   transformByTarget.set(activeTransformTarget, activeTransform);
   activeTransformTarget.style.transform = `translate3d(${activeTransform.x}px, ${activeTransform.y}px, 0) scale(${activeTransform.scale})`;
+}
+
+function schedulePosterPdfZoomRender(): void {
+  if (!isPosterDisplayMode() || activeTransform.scale <= 1.01) {
+    return;
+  }
+
+  const target = activeTransformTarget;
+  const container = target?.querySelector(".pdfjs-page") as HTMLElement | null;
+  const canvas = container?.querySelector("canvas") as HTMLCanvasElement | null;
+  const slide = getCurrentSlideItem();
+  if (!target || !container || !canvas || slide?.kind !== "pdf") {
+    return;
+  }
+
+  const requestedScale = Number(activeTransform.scale.toFixed(2));
+  const renderedScale = Number(container.dataset.renderScale || "1");
+  if (renderedScale >= requestedScale - 0.05) {
+    return;
+  }
+
+  window.clearTimeout(pdfZoomRenderTimer);
+  pdfZoomRenderTimer = window.setTimeout(() => {
+    void renderPosterPdfForZoom(slide, target, container, canvas, requestedScale);
+  }, 120);
+}
+
+async function renderPosterPdfForZoom(
+  slide: SlideItem,
+  target: HTMLElement,
+  container: HTMLElement,
+  canvas: HTMLCanvasElement,
+  scale: number
+): Promise<void> {
+  const token = ++pdfZoomRenderToken;
+  try {
+    const viewportSize = await getPdfViewportSize(container);
+    const rendered = await renderPdfPageToCanvas(slide, viewportSize, scale);
+    if (token !== pdfZoomRenderToken || target !== activeTransformTarget) {
+      return;
+    }
+    applyRenderedPdfPage(rendered, container, canvas, scale);
+  } catch (error: unknown) {
+    showBanner(`Unable to sharpen ${slide.name}: ${getErrorMessage(error)}`);
+  }
 }
 
 function setActiveTransformTarget(viewport: HTMLElement): void {
@@ -1585,10 +1694,11 @@ function setDefaultFourUpTransformTarget(): void {
 }
 
 function showPreviousSlide(): void {
-  pauseForInteraction();
   if (appMode === "lab") {
     return;
   }
+
+  pauseForInteraction();
 
   if (appMode === "poster" && posterItems.length > 0) {
     showPoster((posterIndex - 1 + posterItems.length) % posterItems.length);
@@ -1614,10 +1724,11 @@ function showPreviousSlide(): void {
 }
 
 function showNextSlide(): void {
-  pauseForInteraction();
   if (appMode === "lab") {
     return;
   }
+
+  pauseForInteraction();
 
   if (appMode === "poster" && posterItems.length > 0) {
     showPoster((posterIndex + 1) % posterItems.length);

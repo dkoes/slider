@@ -225,10 +225,15 @@ body {
   pointer-events: auto;
 }
 
-.interactive.lab-mode .nav-control,
-.interactive.lab-mode .zoom-control {
+.lab-mode .nav-control,
+.lab-mode .zoom-control {
   opacity: 0;
   pointer-events: none;
+}
+
+.lab-mode .menu-toggle {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .menu-toggle {
@@ -257,14 +262,17 @@ body {
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
   opacity: 0;
   pointer-events: none;
+  visibility: hidden;
   transform: translateY(-8px);
-  transition: opacity 160ms ease, transform 160ms ease;
+  transition: opacity 160ms ease, transform 160ms ease, visibility 0s linear 160ms;
 }
 
 .menu-panel.open {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
   transform: translateY(0);
+  transition-delay: 0s;
 }
 
 .menu-item {
@@ -327,8 +335,9 @@ body {
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
   opacity: 0;
   pointer-events: none;
+  visibility: hidden;
   transform: translateX(-8px);
-  transition: opacity 140ms ease, transform 140ms ease;
+  transition: opacity 140ms ease, transform 140ms ease, visibility 0s linear 140ms;
 }
 
 .labs-menu.multi-column,
@@ -345,13 +354,15 @@ body {
   align-items: stretch;
 }
 
-.menu-section:hover > .labs-menu,
-.menu-section:focus-within > .labs-menu,
-.lab-menu-list li:hover > .lab-menu-list,
-.lab-menu-list li:focus-within > .lab-menu-list {
+.menu-panel.open .menu-section:hover > .labs-menu,
+.menu-panel.open .menu-section:focus-within > .labs-menu,
+.menu-panel.open .lab-menu-list li:hover > .lab-menu-list,
+.menu-panel.open .lab-menu-list li:focus-within > .lab-menu-list {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
   transform: translateX(0);
+  transition-delay: 0s;
 }
 
 .menu-empty {
