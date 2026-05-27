@@ -58,6 +58,7 @@ class AgentConfig:
     autolaunch: bool
     chrome_path: str
     once: bool
+    config_path: Path
 
     @property
     def slides_dir(self) -> Path:
@@ -131,6 +132,7 @@ def parse_args() -> AgentConfig:
         autolaunch=args.autolaunch,
         chrome_path=args.chrome_path,
         once=args.once,
+        config_path=root / "slider_config.json",
     )
 
 
@@ -188,6 +190,108 @@ def parse_bool(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def render_embedded_slider_html(config_path: Path) -> str:
+    if EMBEDDED_SLIDER_HTML is None:
+        return ""
+
+    marker = "      /* __RUNTIME_SLIDER_DEFAULTS__ */"
+    runtime_defaults = format_runtime_slider_defaults(read_json(config_path))
+    if marker not in EMBEDDED_SLIDER_HTML:
+        return EMBEDDED_SLIDER_HTML
+
+    return EMBEDDED_SLIDER_HTML.replace(marker, runtime_defaults)
+
+
+def format_runtime_slider_defaults(config: dict[str, Any]) -> str:
+    assignments = []
+    add_string_assignment(assignments, "SLIDER_MANIFEST_URL", first_config_value(config, "manifest_url", "manifest"))
+    add_number_assignment(
+        assignments,
+        "SLIDER_TIME_PER_SLIDE_SECONDS",
+        first_config_value(config, "time_per_slide_seconds", "time_seconds", "time"),
+    )
+    add_number_assignment(
+        assignments,
+        "SLIDER_POSTER_TIME_SECONDS",
+        first_config_value(config, "poster_time_seconds", "poster_time"),
+    )
+    add_number_assignment(
+        assignments,
+        "SLIDER_INTERACTIVE_PAUSE_SECONDS",
+        first_config_value(config, "interactive_pause_seconds", "interactive_pause"),
+    )
+    add_number_assignment(
+        assignments,
+        "SLIDER_SYNC_STALE_AFTER_SECONDS",
+        first_config_value(config, "sync_stale_after_seconds", "stale_after_seconds", "stale_after"),
+    )
+    add_number_assignment(assignments, "SLIDER_LIVE_STREAM_MINUTES", config.get("live_stream_minutes"))
+    add_bool_assignment(assignments, "SLIDER_FOUR_UP", first_config_value(config, "four_up", "four"))
+    add_bool_assignment(assignments, "SLIDER_PAN_POSTERS", config.get("pan_posters"))
+    add_fraction_assignment(assignments, "SLIDER_PAN_FRACTION", config.get("pan_fraction"))
+    add_number_assignment(assignments, "SLIDER_PDF_CACHE_SIZE", first_config_value(config, "pdf_cache_size", "pdf_cache"), minimum=0)
+    add_bool_assignment(assignments, "SLIDER_DEBUG", config.get("debug"))
+
+    if not assignments:
+        return "      /* no runtime slider defaults */"
+
+    return "\n".join(assignments)
+
+
+def first_config_value(config: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = config.get(key)
+        if value not in (None, ""):
+            return value
+
+    return None
+
+
+def add_string_assignment(assignments: list[str], name: str, value: Any) -> None:
+    if value in (None, ""):
+        return
+
+    assignments.append(f"      window.{name} = {json.dumps(str(value))};")
+
+
+def add_number_assignment(assignments: list[str], name: str, value: Any, minimum: float = 0) -> None:
+    number = parse_number(value)
+    if number is None or number < minimum or (minimum == 0 and number == 0 and name != "SLIDER_PDF_CACHE_SIZE"):
+        return
+
+    assignments.append(f"      window.{name} = {json.dumps(number)};")
+
+
+def add_fraction_assignment(assignments: list[str], name: str, value: Any) -> None:
+    number = parse_number(value)
+    if number is None or number <= 0 or number > 1:
+        return
+
+    assignments.append(f"      window.{name} = {json.dumps(number)};")
+
+
+def add_bool_assignment(assignments: list[str], name: str, value: Any) -> None:
+    if value in (None, ""):
+        return
+
+    assignments.append(f"      window.{name} = {json.dumps(parse_bool(value))};")
+
+
+def parse_number(value: Any) -> float | int | None:
+    if value in (None, ""):
+        return None
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if not number == number or number in (float("inf"), float("-inf")):
+        return None
+
+    return int(number) if number.is_integer() else number
+
+
 def launch_windows_chrome_kiosk(config: AgentConfig) -> None:
     if sys.platform != "win32" or not config.autolaunch:
         return
@@ -198,7 +302,7 @@ def launch_windows_chrome_kiosk(config: AgentConfig) -> None:
         print("Chrome kiosk launch skipped: chrome.exe was not found.", file=sys.stderr)
         return
 
-    url = get_slider_url(config)
+    url = get_slider_url(config, kiosk=True)
     try:
         subprocess.Popen(
             [
@@ -239,9 +343,10 @@ def find_windows_chrome_path(configured_path: str) -> str:
     return ""
 
 
-def get_slider_url(config: AgentConfig) -> str:
+def get_slider_url(config: AgentConfig, kiosk: bool = False) -> str:
     host = "127.0.0.1" if config.host in {"0.0.0.0", "::"} else config.host
-    return f"http://{host}:{config.port}/slider.html"
+    query = "?kiosk=1" if kiosk else ""
+    return f"http://{host}:{config.port}/slider.html{query}"
 
 
 def sync_loop(syncer: "SharePointSyncer", interval_seconds: int, after_first_sync: Any = None) -> None:
@@ -756,10 +861,11 @@ def make_handler(config: AgentConfig) -> type[SimpleHTTPRequestHandler]:
             parsed_path = urllib.parse.urlparse(self.path).path
             clean_path = posixpath.normpath(urllib.parse.unquote(parsed_path)).lstrip("/")
             if clean_path in ("", "slider.html") and EMBEDDED_SLIDER_HTML is not None:
+                html = render_embedded_slider_html(config.config_path)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
-                self.wfile.write(EMBEDDED_SLIDER_HTML.encode("utf-8"))
+                self.wfile.write(html.encode("utf-8"))
                 return
 
             super().do_GET()

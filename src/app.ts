@@ -298,7 +298,7 @@ function setMenuOpen(open: boolean): void {
 }
 
 async function enterFullscreen(): Promise<void> {
-  if (!document.fullscreenEnabled || document.fullscreenElement) {
+  if (isKioskMode() || !document.fullscreenEnabled || document.fullscreenElement) {
     updateFullscreenMenu();
     return;
   }
@@ -313,9 +313,14 @@ async function enterFullscreen(): Promise<void> {
 }
 
 function updateFullscreenMenu(): void {
-  const hidden = !document.fullscreenEnabled || Boolean(document.fullscreenElement);
+  const hidden = isKioskMode() || !document.fullscreenEnabled || Boolean(document.fullscreenElement);
   fullscreenDivider.hidden = hidden;
   fullscreenButton.hidden = hidden;
+}
+
+function isKioskMode(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  return parseBooleanParam(params.get("kiosk"), false);
 }
 
 function getConfig(): SliderConfig {

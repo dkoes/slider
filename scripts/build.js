@@ -44,6 +44,7 @@ const sliderDefaults = getSliderDefaults(sliderConfig);
 const agentDefaults = getAgentDefaults(sliderConfig);
 const html = template
   .replace("__SLIDER_DEFAULTS__", () => formatSliderDefaults(sliderDefaults))
+  .replace("__RUNTIME_SLIDER_DEFAULTS__", () => "      /* __RUNTIME_SLIDER_DEFAULTS__ */")
   .replace("__INLINE_PDF_JS__", () => pdfJs.trim())
   .replace("__PDF_WORKER_SOURCE__", () => formatPdfWorkerSource(pdfWorkerJs))
   .replace("__INLINE_CSS__", () => css.trim())
