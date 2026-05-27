@@ -561,7 +561,7 @@ async function waitForSlideReady(slideNode: HTMLElement): Promise<void> {
     return;
   }
 
-  await withTimeout(waitForMediaReady(media), 4000);
+  await withTimeout(waitForMediaReady(media), 5000);
 }
 
 function waitForMediaReady(media: HTMLElement): Promise<void> {
