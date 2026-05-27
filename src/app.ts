@@ -171,6 +171,8 @@ let pdfRenderCache = new Map<string, PdfRenderCacheEntry>();
 let pdfDocumentCache = new Map<string, Promise<PdfDocumentProxy>>();
 let pdfZoomRenderTimer = 0;
 let pdfZoomRenderToken = 0;
+let pdfZoomRenderTarget: HTMLElement | null = null;
+let pdfZoomRenderScale = 1;
 let lastAutoplayMode: AutoplayMode = "announcements";
 let liveStreamEndsAt = 0;
 let liveStreamTimer = 0;
@@ -1638,14 +1640,21 @@ function schedulePosterPdfZoomRender(): void {
   }
 
   const requestedScale = Number(activeTransform.scale.toFixed(2));
+  if (target !== pdfZoomRenderTarget) {
+    pdfZoomRenderTarget = target;
+    pdfZoomRenderScale = 1;
+  }
+
+  pdfZoomRenderScale = Math.max(pdfZoomRenderScale, requestedScale);
   const renderedScale = Number(container.dataset.renderScale || "1");
-  if (renderedScale >= requestedScale - 0.05) {
+  if (renderedScale >= pdfZoomRenderScale - 0.05) {
     return;
   }
 
   window.clearTimeout(pdfZoomRenderTimer);
+  const renderScale = pdfZoomRenderScale;
   pdfZoomRenderTimer = window.setTimeout(() => {
-    void renderPosterPdfForZoom(slide, target, container, canvas, requestedScale);
+    void renderPosterPdfForZoom(slide, target, container, canvas, renderScale);
   }, 120);
 }
 
