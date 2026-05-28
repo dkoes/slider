@@ -10,7 +10,7 @@ Example:
   scripts/package_release.sh user@bits.csb.pitt.edu:/var/www/html/slider_updates https://bits.csb.pitt.edu/slider_updates
 
 Environment overrides:
-  PYINSTALLER   PyInstaller command to run. Default: pyinstaller
+  PYINSTALLER   PyInstaller command to run. Default: py -m PyInstaller
   EXE_NAME      Base executable name. Default: slider
   RELEASE_DIR   Local release artifact directory. Default: release
 USAGE
@@ -23,7 +23,7 @@ fi
 
 SCP_DESTINATION="$1"
 PUBLIC_BASE_URL="${2%/}"
-PYINSTALLER="${PYINSTALLER:-PyInstaller}"
+PYINSTALLER="${PYINSTALLER:-py -m PyInstaller}"
 EXE_NAME="${EXE_NAME:-slider}"
 RELEASE_DIR="${RELEASE_DIR:-release}"
 
@@ -73,7 +73,8 @@ echo "Building embedded slider assets..."
 npm run build
 
 echo "Packaging ${EXE_NAME}.exe with PyInstaller..."
-"${PYINSTALLER}" --noconfirm --clean --onefile --name "${EXE_NAME}" build/slider_agent.py
+read -r -a PYINSTALLER_COMMAND <<< "${PYINSTALLER}"
+"${PYINSTALLER_COMMAND[@]}" --noconfirm --clean --onefile --name "${EXE_NAME}" build/slider_agent.py
 
 mkdir -p "${RELEASE_DIR}"
 cp "dist/${EXE_NAME}.exe" "${ARTIFACT_PATH}"

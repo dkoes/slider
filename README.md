@@ -126,7 +126,7 @@ The agent uses only the Python standard library. For a Windows deployment that d
 
 ```sh
 npm run build
-pyinstaller --onefile build/slider_agent.py
+py -m PyInstaller --onefile build/slider_agent.py
 ```
 
 No separate `slider.html` is needed. The `npm run build` step embeds both the slider UI and the current `slider_config.json` defaults into `build/slider_agent.py`. A `slider_config.json` next to the executable can override embedded agent and app defaults at runtime; environment variables and command-line flags can also override agent settings. The executable creates and updates `slider_data/` next to where it runs unless `--data-dir` is provided.
