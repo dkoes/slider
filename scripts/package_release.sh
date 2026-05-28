@@ -23,7 +23,7 @@ fi
 
 SCP_DESTINATION="$1"
 PUBLIC_BASE_URL="${2%/}"
-PYINSTALLER="${PYINSTALLER:-pyinstaller}"
+PYINSTALLER="${PYINSTALLER:-PyInstaller}"
 EXE_NAME="${EXE_NAME:-slider}"
 RELEASE_DIR="${RELEASE_DIR:-release}"
 
