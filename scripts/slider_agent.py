@@ -226,6 +226,7 @@ def format_runtime_slider_defaults(config: dict[str, Any]) -> str:
         first_config_value(config, "sync_stale_after_seconds", "stale_after_seconds", "stale_after"),
     )
     add_number_assignment(assignments, "SLIDER_LIVE_STREAM_MINUTES", config.get("live_stream_minutes"))
+    add_object_assignment(assignments, "SLIDER_LIVE_STREAMS", config.get("live_streams"))
     add_bool_assignment(assignments, "SLIDER_FOUR_UP", first_config_value(config, "four_up", "four"))
     add_bool_assignment(assignments, "SLIDER_PAN_POSTERS", config.get("pan_posters"))
     add_fraction_assignment(assignments, "SLIDER_PAN_FRACTION", config.get("pan_fraction"))
@@ -259,6 +260,21 @@ def add_string_assignment(assignments: list[str], name: str, value: Any) -> None
         return
 
     assignments.append(f"      window.{name} = {json.dumps(str(value))};")
+
+
+def add_object_assignment(assignments: list[str], name: str, value: Any) -> None:
+    if not isinstance(value, dict):
+        return
+
+    payload = {
+        str(key).strip(): str(item).strip()
+        for key, item in value.items()
+        if str(key).strip() and str(item).strip()
+    }
+    if not payload:
+        return
+
+    assignments.append(f"      window.{name} = {json.dumps(payload)};")
 
 
 def add_number_assignment(assignments: list[str], name: str, value: Any, minimum: float = 0) -> None:

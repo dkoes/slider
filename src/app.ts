@@ -1,8 +1,7 @@
 type SlideKind = "image" | "pdf" | "html";
 type SyncStatus = "ok" | "syncing" | "error";
 type AutoplayMode = "announcements" | "posters";
-type LiveStreamMode = "cats" | "puppies" | "jellyfish";
-type AppMode = AutoplayMode | "lab" | "poster" | LiveStreamMode;
+type AppMode = AutoplayMode | "lab" | "poster" | "live-stream";
 type BannerKind = "general" | "sync";
 
 interface SliderGlobals {
@@ -12,6 +11,7 @@ interface SliderGlobals {
   SLIDER_INTERACTIVE_PAUSE_SECONDS?: number;
   SLIDER_SYNC_STALE_AFTER_SECONDS?: number;
   SLIDER_LIVE_STREAM_MINUTES?: number;
+  SLIDER_LIVE_STREAMS?: Record<string, string>;
   SLIDER_FOUR_UP?: boolean;
   SLIDER_PAN_POSTERS?: boolean;
   SLIDER_PAN_FRACTION?: number;
@@ -88,6 +88,7 @@ interface SliderConfig {
   interactivePauseSeconds: number;
   syncStaleAfterSeconds: number;
   liveStreamMinutes: number;
+  liveStreams: LiveStreamConfig[];
   fourUp: boolean;
   panPosters: boolean;
   panFraction: number;
@@ -116,6 +117,11 @@ interface PdfRenderOptions {
   useCache?: boolean;
 }
 
+interface LiveStreamConfig {
+  name: string;
+  url: string;
+}
+
 interface ViewTransform {
   scale: number;
   x: number;
@@ -135,9 +141,7 @@ const menuToggle = mustGetElement("menu-toggle") as HTMLButtonElement;
 const menuPanel = mustGetElement("menu-panel");
 const announcementsButton = mustGetElement("menu-announcements") as HTMLButtonElement;
 const postersButton = mustGetElement("menu-posters") as HTMLButtonElement;
-const catsButton = mustGetElement("menu-cats") as HTMLButtonElement;
-const puppiesButton = mustGetElement("menu-puppies") as HTMLButtonElement;
-const jellyfishButton = mustGetElement("menu-jellyfish") as HTMLButtonElement;
+const liveStreamMenu = mustGetElement("live-stream-menu");
 const fullscreenDivider = mustGetElement("fullscreen-divider");
 const fullscreenButton = mustGetElement("menu-fullscreen") as HTMLButtonElement;
 const labsMenu = mustGetElement("labs-menu");
@@ -189,19 +193,11 @@ let liveStreamTimer = 0;
 let sizingRefreshToken = 0;
 let bannerKind: BannerKind | null = null;
 
-const liveStreams: Record<LiveStreamMode, { title: string; embedUrl: string }> = {
-  cats: {
-    title: "Cats",
-    embedUrl: "https://www.youtube.com/embed/e9C9K8ltDfk?autoplay=1&mute=1&playsinline=1&rel=0"
-  },
-  puppies: {
-    title: "Puppies",
-    embedUrl: "https://www.youtube.com/embed/h-Z0wCdD3dI?autoplay=1&mute=1&playsinline=1&rel=0"
-  },
-  jellyfish: {
-    title: "Jellyfish",
-    embedUrl: "https://www.youtube.com/embed/m1XcdxjVGos?autoplay=1&mute=1&playsinline=1&rel=0"
-  }
+const defaultLiveStreams: Record<string, string> = {
+  Cats: "https://www.youtube.com/watch?v=e9C9K8ltDfk",
+  Puppies: "https://www.youtube.com/watch?v=h-Z0wCdD3dI",
+  Jellyfish: "https://www.youtube.com/watch?v=m1XcdxjVGos",
+  ISS: "https://www.youtube.com/watch?v=FuuC4dpSQ1M"
 };
 
 start().catch((error: unknown) => {
@@ -211,6 +207,7 @@ start().catch((error: unknown) => {
 async function start(): Promise<void> {
   config = getConfig();
   configurePdfJs();
+  renderLiveStreamMenu();
   wireControls();
   document.body.classList.toggle("four-mode", config.fourUp && appMode === "announcements");
   running = true;
@@ -219,7 +216,7 @@ async function start(): Promise<void> {
   // The slideshow loop advances announcement slides and the randomized poster
   // stream. Lab browsing and selected poster detail views are user-driven modes.
   while (running) {
-    if (appMode === "lab" || appMode === "poster" || isLiveStreamMode(appMode)) {
+    if (appMode === "lab" || appMode === "poster" || appMode === "live-stream") {
       await sleep(500);
       continue;
     }
@@ -264,9 +261,6 @@ function wireControls(): void {
   menuPanel.addEventListener("click", (event) => event.stopPropagation());
   announcementsButton.addEventListener("click", () => showAnnouncements());
   postersButton.addEventListener("click", () => showPosters());
-  catsButton.addEventListener("click", () => showLiveStream("cats"));
-  puppiesButton.addEventListener("click", () => showLiveStream("puppies"));
-  jellyfishButton.addEventListener("click", () => showLiveStream("jellyfish"));
   fullscreenButton.addEventListener("click", () => {
     void enterFullscreen();
   });
@@ -274,8 +268,8 @@ function wireControls(): void {
     event.stopPropagation();
     resetLiveStreamCountdown();
   });
-  previousButton.addEventListener("click", () => showPreviousSlide());
-  nextButton.addEventListener("click", () => showNextSlide());
+  previousButton.addEventListener("click", () => showPreviousSlide(previousButton));
+  nextButton.addEventListener("click", () => showNextSlide(nextButton));
   zoomInButton.addEventListener("click", () => {
     pauseForInteraction();
     zoomAt(1.25);
@@ -286,9 +280,9 @@ function wireControls(): void {
   });
   window.addEventListener("keydown", (event) => {
     if (event.key === "ArrowLeft") {
-      showPreviousSlide();
+      showPreviousSlide(previousButton);
     } else if (event.key === "ArrowRight") {
-      showNextSlide();
+      showNextSlide(nextButton);
     } else if (event.key === "+" || event.key === "=") {
       pauseForInteraction();
       zoomAt(1.25);
@@ -307,6 +301,18 @@ function wireControls(): void {
     }
   });
   updateFullscreenMenu();
+}
+
+function renderLiveStreamMenu(): void {
+  liveStreamMenu.replaceChildren();
+  for (const stream of config.liveStreams) {
+    const button = document.createElement("button");
+    button.className = "menu-item";
+    button.type = "button";
+    button.textContent = stream.name;
+    button.addEventListener("click", () => showLiveStream(stream));
+    liveStreamMenu.append(button);
+  }
 }
 
 function setMenuOpen(open: boolean): void {
@@ -364,6 +370,7 @@ function getConfig(): SliderConfig {
   const parsedLiveStreamMinutes = rawLiveStreamMinutes
     ? Number(rawLiveStreamMinutes)
     : Number(globals.SLIDER_LIVE_STREAM_MINUTES);
+  const liveStreams = normalizeLiveStreams(globals.SLIDER_LIVE_STREAMS || defaultLiveStreams);
   const rawPdfCacheSize = params.get("pdf_cache_size");
   const parsedPdfCacheSize = rawPdfCacheSize ? Number(rawPdfCacheSize) : Number(globals.SLIDER_PDF_CACHE_SIZE);
   const pdfDocumentCache = parseBooleanParam(params.get("pdf_document_cache"), globals.SLIDER_PDF_DOCUMENT_CACHE ?? true);
@@ -386,6 +393,7 @@ function getConfig(): SliderConfig {
     interactivePauseSeconds: Number.isFinite(parsedInteractivePause) && parsedInteractivePause > 0 ? parsedInteractivePause : 120,
     syncStaleAfterSeconds: Number.isFinite(parsedStaleAfter) && parsedStaleAfter > 0 ? parsedStaleAfter : 1800,
     liveStreamMinutes: Number.isFinite(parsedLiveStreamMinutes) && parsedLiveStreamMinutes > 0 ? parsedLiveStreamMinutes : 30,
+    liveStreams,
     fourUp,
     panPosters,
     panFraction: Number.isFinite(parsedPanFraction) && parsedPanFraction > 0 && parsedPanFraction <= 1 ? parsedPanFraction : 0.85,
@@ -395,6 +403,12 @@ function getConfig(): SliderConfig {
     pdfMaxZoomRenderScale: Number.isFinite(parsedPdfMaxZoomRenderScale) && parsedPdfMaxZoomRenderScale > 0 ? parsedPdfMaxZoomRenderScale : 5,
     debug: parseBooleanParam(params.get("debug"), Boolean(globals.SLIDER_DEBUG))
   };
+}
+
+function normalizeLiveStreams(streams: Record<string, string>): LiveStreamConfig[] {
+  return Object.entries(streams)
+    .map(([name, url]) => ({ name: name.trim(), url: String(url || "").trim() }))
+    .filter((stream) => stream.name && stream.url);
 }
 
 function configurePdfJs(): void {
@@ -569,6 +583,31 @@ async function showSlide(slide: SlideItem, direction: "next" | "previous" = "nex
   window.setTimeout(() => {
     previous?.remove();
   }, 700);
+}
+
+async function showSlideWithManualLoading(
+  slide: SlideItem,
+  direction: "next" | "previous",
+  loadingButton?: HTMLButtonElement
+): Promise<void> {
+  const showLoading = slide.kind === "pdf" && loadingButton;
+  if (showLoading) {
+    setNavButtonLoading(loadingButton, true);
+  }
+
+  try {
+    await showSlide(slide, direction);
+  } finally {
+    if (showLoading) {
+      setNavButtonLoading(loadingButton, false);
+    }
+  }
+}
+
+function setNavButtonLoading(button: HTMLButtonElement, loading: boolean): void {
+  button.classList.toggle("loading", loading);
+  button.disabled = loading;
+  button.setAttribute("aria-busy", String(loading));
 }
 
 async function waitForSlideReady(slideNode: HTMLElement): Promise<void> {
@@ -751,11 +790,10 @@ function showPosters(): void {
   }
 }
 
-function showLiveStream(mode: LiveStreamMode): void {
-  const stream = liveStreams[mode];
+function showLiveStream(stream: LiveStreamConfig): void {
   setMenuOpen(false);
   exitInteractiveMode();
-  setAppMode(mode);
+  setAppMode("live-stream");
   activeSlide?.remove();
   activeSlide = null;
   activeFourSlides.forEach((node) => node.remove());
@@ -765,11 +803,11 @@ function showLiveStream(mode: LiveStreamMode): void {
 
   const view = document.createElement("article");
   view.className = "cat-stream";
-  view.setAttribute("aria-label", `${stream.title} live stream`);
+  view.setAttribute("aria-label", `${stream.name} live stream`);
 
   const frame = document.createElement("iframe");
-  frame.src = stream.embedUrl;
-  frame.title = `${stream.title} live stream`;
+  frame.src = getLiveStreamEmbedUrl(stream.url);
+  frame.title = `${stream.name} live stream`;
   frame.tabIndex = -1;
   frame.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
   frame.allowFullscreen = true;
@@ -779,7 +817,32 @@ function showLiveStream(mode: LiveStreamMode): void {
   // Livestreams are interrupting modes. The timer owns the return path to whichever
   // autoplay mode was active most recently before the stream was opened.
   resetLiveStreamCountdown();
-  showDebugTitle(stream.title);
+  showDebugTitle(stream.name);
+}
+
+function getLiveStreamEmbedUrl(url: string): string {
+  try {
+    const parsed = new URL(url, window.location.href);
+    const host = parsed.hostname.replace(/^www\./, "");
+    let videoId = "";
+    if (host === "youtube.com" || host === "m.youtube.com") {
+      if (parsed.pathname === "/watch") {
+        videoId = parsed.searchParams.get("v") || "";
+      } else if (parsed.pathname.startsWith("/embed/")) {
+        videoId = parsed.pathname.split("/")[2] || "";
+      }
+    } else if (host === "youtu.be") {
+      videoId = parsed.pathname.slice(1).split("/")[0] || "";
+    }
+
+    if (videoId) {
+      return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?autoplay=1&mute=1&playsinline=1&rel=0`;
+    }
+  } catch {
+    return url;
+  }
+
+  return url;
 }
 
 function resetLiveStreamCountdown(): void {
@@ -795,7 +858,7 @@ function stopLiveStreamCountdown(): void {
 }
 
 function updateLiveStreamCountdown(): void {
-  if (!isLiveStreamMode(appMode) || liveStreamEndsAt <= 0) {
+  if (appMode !== "live-stream" || liveStreamEndsAt <= 0) {
     return;
   }
 
@@ -899,7 +962,11 @@ function createPosterSelectorButton(item: SlideItem, index: number): HTMLElement
   return button;
 }
 
-function showPoster(index: number, direction: "next" | "previous" = "next"): void {
+function showPoster(
+  index: number,
+  direction: "next" | "previous" = "next",
+  loadingButton?: HTMLButtonElement
+): void {
   const item = posterItems[index];
   if (!item) {
     return;
@@ -908,7 +975,7 @@ function showPoster(index: number, direction: "next" | "previous" = "next"): voi
   setAppMode("poster");
   posterIndex = index;
   pauseForInteraction();
-  void showSlide(item, direction);
+  void showSlideWithManualLoading(item, direction, loadingButton);
 }
 
 async function advanceFourSlides(): Promise<void> {
@@ -1726,13 +1793,8 @@ function showControls(): void {
 function setAppMode(mode: AppMode): void {
   appMode = mode;
   document.body.classList.toggle("lab-mode", mode === "lab");
-  document.body.classList.toggle("cat-mode", mode === "cats");
-  document.body.classList.toggle("live-stream-mode", isLiveStreamMode(mode));
+  document.body.classList.toggle("live-stream-mode", mode === "live-stream");
   document.body.classList.toggle("four-mode", config.fourUp && mode === "announcements");
-}
-
-function isLiveStreamMode(mode: AppMode): mode is LiveStreamMode {
-  return mode === "cats" || mode === "puppies" || mode === "jellyfish";
 }
 
 function exitInteractiveMode(): void {
@@ -1886,7 +1948,7 @@ function setDefaultFourUpTransformTarget(): void {
   }
 }
 
-function showPreviousSlide(): void {
+function showPreviousSlide(loadingButton?: HTMLButtonElement): void {
   if (appMode === "lab") {
     return;
   }
@@ -1894,13 +1956,13 @@ function showPreviousSlide(): void {
   pauseForInteraction();
 
   if (appMode === "poster" && posterItems.length > 0) {
-    showPoster((posterIndex - 1 + posterItems.length) % posterItems.length, "previous");
+    showPoster((posterIndex - 1 + posterItems.length) % posterItems.length, "previous", loadingButton);
     return;
   }
 
   if (appMode === "posters" && posterSlideshowItems.length > 0) {
     posterSlideshowIndex = (posterSlideshowIndex - 1 + posterSlideshowItems.length) % posterSlideshowItems.length;
-    void showSlide(posterSlideshowItems[posterSlideshowIndex], "previous");
+    void showSlideWithManualLoading(posterSlideshowItems[posterSlideshowIndex], "previous", loadingButton);
     return;
   }
 
@@ -1912,11 +1974,11 @@ function showPreviousSlide(): void {
     rewindFourSlides();
   } else {
     slideIndex = (slideIndex - 1 + slides.length) % slides.length;
-    void showSlide(slides[slideIndex], "previous");
+    void showSlideWithManualLoading(slides[slideIndex], "previous", loadingButton);
   }
 }
 
-function showNextSlide(): void {
+function showNextSlide(loadingButton?: HTMLButtonElement): void {
   if (appMode === "lab") {
     return;
   }
@@ -1924,13 +1986,13 @@ function showNextSlide(): void {
   pauseForInteraction();
 
   if (appMode === "poster" && posterItems.length > 0) {
-    showPoster((posterIndex + 1) % posterItems.length);
+    showPoster((posterIndex + 1) % posterItems.length, "next", loadingButton);
     return;
   }
 
   if (appMode === "posters" && posterSlideshowItems.length > 0) {
     posterSlideshowIndex = (posterSlideshowIndex + 1) % posterSlideshowItems.length;
-    void showSlide(posterSlideshowItems[posterSlideshowIndex]);
+    void showSlideWithManualLoading(posterSlideshowItems[posterSlideshowIndex], "next", loadingButton);
     return;
   }
 
@@ -1942,7 +2004,7 @@ function showNextSlide(): void {
     void advanceFourSlides();
   } else {
     slideIndex = (slideIndex + 1) % slides.length;
-    void showSlide(slides[slideIndex]);
+    void showSlideWithManualLoading(slides[slideIndex], "next", loadingButton);
   }
 }
 
@@ -1959,7 +2021,7 @@ async function waitForAdvance(durationMs: number): Promise<void> {
   let end = Date.now() + durationMs;
   while (running) {
     if (appMode !== waitMode) {
-      if (appMode === "lab" || appMode === "poster" || isLiveStreamMode(appMode)) {
+      if (appMode === "lab" || appMode === "poster" || appMode === "live-stream") {
         return;
       }
 

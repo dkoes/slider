@@ -6,6 +6,12 @@ import ts from "typescript";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const buildDir = resolve(root, "build");
 const jsBuildDir = resolve(root, "build/js");
+const defaultLiveStreams = {
+  Cats: "https://www.youtube.com/watch?v=e9C9K8ltDfk",
+  Puppies: "https://www.youtube.com/watch?v=h-Z0wCdD3dI",
+  Jellyfish: "https://www.youtube.com/watch?v=m1XcdxjVGos",
+  ISS: "https://www.youtube.com/watch?v=FuuC4dpSQ1M"
+};
 
 await rm(buildDir, { recursive: true, force: true });
 await rm(resolve(root, "dist"), { recursive: true, force: true });
@@ -104,6 +110,7 @@ function getSliderDefaults(config) {
       1800
     ),
     liveStreamMinutes: positiveNumber(config.live_stream_minutes, 30),
+    liveStreams: objectOfStrings(config.live_streams, defaultLiveStreams),
     fourUp: booleanValue(firstDefined(config.four_up, config.four), false),
     panPosters: booleanValue(config.pan_posters, true),
     panFraction: fractionValue(config.pan_fraction, 0.85),
@@ -155,6 +162,7 @@ function formatSliderDefaults(defaults) {
     ["SLIDER_INTERACTIVE_PAUSE_SECONDS", defaults.interactivePauseSeconds],
     ["SLIDER_SYNC_STALE_AFTER_SECONDS", defaults.syncStaleAfterSeconds],
     ["SLIDER_LIVE_STREAM_MINUTES", defaults.liveStreamMinutes],
+    ["SLIDER_LIVE_STREAMS", defaults.liveStreams],
     ["SLIDER_FOUR_UP", defaults.fourUp],
     ["SLIDER_PAN_POSTERS", defaults.panPosters],
     ["SLIDER_PAN_FRACTION", defaults.panFraction],
@@ -188,6 +196,17 @@ function firstDefined(...values) {
 
 function stringValue(value, fallback) {
   return value === undefined || value === null || value === "" ? fallback : String(value);
+}
+
+function objectOfStrings(value, fallback) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return fallback;
+  }
+
+  const entries = Object.entries(value)
+    .map(([key, item]) => [String(key).trim(), String(item || "").trim()])
+    .filter(([key, item]) => key && item);
+  return entries.length > 0 ? Object.fromEntries(entries) : fallback;
 }
 
 function positiveNumber(value, fallback) {

@@ -12,6 +12,12 @@
   "poster_time_seconds": 60,
   "interactive_pause_seconds": 120,
   "live_stream_minutes": 30,
+  "live_streams": {
+    "Cats": "https://www.youtube.com/watch?v=e9C9K8ltDfk",
+    "Puppies": "https://www.youtube.com/watch?v=h-Z0wCdD3dI",
+    "Jellyfish": "https://www.youtube.com/watch?v=m1XcdxjVGos",
+    "ISS": "https://www.youtube.com/watch?v=FuuC4dpSQ1M"
+  },
   "four_up": false,
   "pan_posters": true,
   "pan_fraction": 0.75,

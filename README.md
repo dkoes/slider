@@ -33,7 +33,7 @@ Edit `slider_config.json`. The example file lists every supported setting and it
 }
 ```
 
-`slider_config.json` is ignored by git so private or environment-specific folder URLs are not committed. Agent settings are read when the Python agent starts. App settings, such as `time_per_slide_seconds`, `poster_time_seconds`, `interactive_pause_seconds`, `four_up`, `pan_posters`, `pan_fraction`, `pdf_cache_size`, `pdf_document_cache`, `pdf_render_cache`, `pdf_max_zoom_render_scale`, and `debug`, are embedded as defaults when you run `npm run build`, and a runtime `slider_config.json` next to the Python agent or packaged executable can override them when `slider.html` is served. URL parameters remain the final override. Parsed PDF documents are cached by default; set `pdf_document_cache: false` to reload PDF.js documents for each render. Rendered PDF canvases are not cached by default; set `pdf_render_cache: true` to enable that cache. `pdf_max_zoom_render_scale` caps high-resolution PDF poster renders and defaults to `5`.
+`slider_config.json` is ignored by git so private or environment-specific folder URLs are not committed. Agent settings are read when the Python agent starts. App settings, such as `time_per_slide_seconds`, `poster_time_seconds`, `interactive_pause_seconds`, `live_streams`, `four_up`, `pan_posters`, `pan_fraction`, `pdf_cache_size`, `pdf_document_cache`, `pdf_render_cache`, `pdf_max_zoom_render_scale`, and `debug`, are embedded as defaults when you run `npm run build`, and a runtime `slider_config.json` next to the Python agent or packaged executable can override them when `slider.html` is served. URL parameters remain the final override. Parsed PDF documents are cached by default; set `pdf_document_cache: false` to reload PDF.js documents for each render. Rendered PDF canvases are not cached by default; set `pdf_render_cache: true` to enable that cache. `pdf_max_zoom_render_scale` caps high-resolution PDF poster renders and defaults to `5`.
 
 You can also provide core agent settings with command-line flags or environment variables, such as `--folder` or `SLIDER_FOLDER_URL`. On Windows, the agent launches Chrome in kiosk mode by default after the server starts. Set `chrome_path` or `SLIDER_CHROME_PATH` to use a specific Chrome executable, or disable it with `autolaunch: false` or `--no-autolaunch`. The kiosk launch URL includes `kiosk=1` so the app hides its fullscreen menu option.
 
@@ -96,11 +96,11 @@ If the shared folder contains a `Labs` folder, the agent recursively syncs its s
 - `Announcements`: the default slideshow from the root folder
 - `Posters`: a randomized slideshow of all non-index PNG/PDF/HTML files under `Labs`
 - `Labs`: a hierarchical list of lab folders
-- `Cats`, `Puppies`, and `Jellyfish`: fullscreen YouTube livestreams with a countdown timer
+- Livestream menu items from `live_streams`: fullscreen video streams with a countdown timer
 
 Each lab folder can include an `index.html` file plus PNG/PDF/HTML poster files. Selecting a lab shows `index.html` on the left two-thirds of the screen and a scrollable poster selector on the right. Selecting a poster opens it full-screen with the normal interactive navigation and zoom controls.
 
-Livestreams run for `live_stream_minutes` before returning to whichever autoplay mode, `Announcements` or `Posters`, was running most recently.
+Livestreams run for `live_stream_minutes` before returning to whichever autoplay mode, `Announcements` or `Posters`, was running most recently. Configure livestream menu items with a `live_streams` object mapping menu names to URLs; YouTube watch URLs are converted to embeds automatically.
 
 ## Development
 
