@@ -3,6 +3,7 @@ type SyncStatus = "ok" | "syncing" | "error";
 type AutoplayMode = "announcements" | "posters";
 type LiveStreamMode = "cats" | "puppies" | "jellyfish";
 type AppMode = AutoplayMode | "lab" | "poster" | LiveStreamMode;
+type BannerKind = "general" | "sync";
 
 interface SliderGlobals {
   SLIDER_MANIFEST_URL?: string;
@@ -182,6 +183,7 @@ let lastAutoplayMode: AutoplayMode = "announcements";
 let liveStreamEndsAt = 0;
 let liveStreamTimer = 0;
 let sizingRefreshToken = 0;
+let bannerKind: BannerKind | null = null;
 
 const liveStreams: Record<LiveStreamMode, { title: string; embedUrl: string }> = {
   cats: {
@@ -483,16 +485,16 @@ function updateSyncBanner(manifest: SlideManifest, config: SliderConfig): void {
 
   if (sync?.status && sync.status !== "ok") {
     const detail = sync.error ? `: ${sync.error}` : "";
-    showBanner(`Slide sync ${sync.status}${detail}`);
+    showBanner(`Slide sync ${sync.status}${detail}`, "sync");
     return;
   }
 
   if (staleMessage) {
-    showBanner(staleMessage);
+    showBanner(staleMessage, "sync");
     return;
   }
 
-  hideBanner();
+  hideBanner("sync");
 }
 
 function getStaleMessage(lastSuccess: string | undefined, staleAfterSeconds: number): string {
@@ -1967,12 +1969,19 @@ function clearStaticMessage(): void {
   stage.querySelectorAll("[data-static-message='true']").forEach((node) => node.remove());
 }
 
-function showBanner(message: string): void {
+function showBanner(message: string, kind: BannerKind = "general"): void {
+  bannerKind = kind;
   banner.textContent = message;
   banner.classList.add("visible");
 }
 
-function hideBanner(): void {
+function hideBanner(kind?: BannerKind): void {
+  if (kind && bannerKind !== kind) {
+    return;
+  }
+
+  bannerKind = null;
+  banner.textContent = "";
   banner.classList.remove("visible");
 }
 
