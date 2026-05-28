@@ -137,4 +137,4 @@ To package and publish an updater release from Windows Git Bash:
 scripts/package_release.sh user@bits.csb.pitt.edu:/path/to/slider_updates https://bits.csb.pitt.edu/slider_updates
 ```
 
-The script runs `npm run build`, packages `dist/slider.exe` with PyInstaller, copies it to `release/slider-<version>.exe`, writes `release/latest.json`, and uploads both files with `scp`. The manifest points at the public base URL you pass as the second argument. Set the release version in `package.json` before running it.
+The app version is derived from Git with `git describe --tags --dirty --always`; this same version is baked into the executable and written to `release/latest.json`. Tag the commit you want to publish, for example `git tag v1.2.0`, before packaging. The script runs `npm run build`, packages `dist/slider.exe` with PyInstaller, copies it to `release/slider-<git-version>.exe`, writes `release/latest.json`, and uploads both files with `scp`. The manifest points at the public base URL you pass as the second argument. Dirty worktrees are refused by default; set `ALLOW_DIRTY_RELEASE=1` only for a test upload.

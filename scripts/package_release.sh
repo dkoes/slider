@@ -32,6 +32,11 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v git >/dev/null 2>&1; then
+  echo "git is required." >&2
+  exit 1
+fi
+
 if ! command -v sha256sum >/dev/null 2>&1; then
   echo "sha256sum is required." >&2
   exit 1
@@ -42,8 +47,25 @@ if ! command -v scp >/dev/null 2>&1; then
   exit 1
 fi
 
-VERSION="$(node -p "require('./package.json').version")"
-ARTIFACT_NAME="${EXE_NAME}-${VERSION}.exe"
+git_version() {
+  local version
+  version="$(git describe --tags --dirty --always)"
+  if [[ "${version}" =~ ^[0-9a-fA-F]{7,}(-dirty)?$ ]]; then
+    version="0.0.$(git rev-list --count HEAD)-${version}"
+  fi
+  printf '%s\n' "${version}"
+}
+
+VERSION="$(git_version)"
+if [[ "${VERSION}" == *-dirty ]]; then
+  if [[ "${ALLOW_DIRTY_RELEASE:-}" != "1" ]]; then
+    echo "Refusing to package a dirty Git worktree release (${VERSION}). Commit or stash changes first, or set ALLOW_DIRTY_RELEASE=1." >&2
+    exit 1
+  fi
+fi
+
+SAFE_VERSION="$(printf '%s' "${VERSION}" | sed 's/[^A-Za-z0-9._-]/_/g')"
+ARTIFACT_NAME="${EXE_NAME}-${SAFE_VERSION}.exe"
 ARTIFACT_PATH="${RELEASE_DIR}/${ARTIFACT_NAME}"
 MANIFEST_PATH="${RELEASE_DIR}/latest.json"
 

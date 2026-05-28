@@ -1,4 +1,5 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -36,19 +37,18 @@ if (diagnostics.length > 0) {
   reportDiagnostics(diagnostics);
 }
 
-const [template, css, js, agentSource, pdfJs, pdfWorkerJs, packageJson] = await Promise.all([
+const [template, css, js, agentSource, pdfJs, pdfWorkerJs] = await Promise.all([
   readFile(resolve(root, "src/template.html"), "utf8"),
   readFile(resolve(root, "src/styles.css"), "utf8"),
   readFile(resolve(jsBuildDir, "app.js"), "utf8"),
   readFile(resolve(root, "scripts/slider_agent.py"), "utf8"),
   readFile(resolve(root, "node_modules/pdfjs-dist/legacy/build/pdf.min.mjs"), "utf8"),
-  readFile(resolve(root, "node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs"), "utf8"),
-  readOptionalJson(resolve(root, "package.json"))
+  readFile(resolve(root, "node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs"), "utf8")
 ]);
 
 const sliderConfig = await readOptionalJson(resolve(root, "slider_config.json"));
 const sliderDefaults = getSliderDefaults(sliderConfig);
-const agentDefaults = getAgentDefaults(sliderConfig, packageJson);
+const agentDefaults = getAgentDefaults(sliderConfig);
 const html = template
   .replace("__SLIDER_DEFAULTS__", () => formatSliderDefaults(sliderDefaults))
   .replace("__RUNTIME_SLIDER_DEFAULTS__", () => "      /* __RUNTIME_SLIDER_DEFAULTS__ */")
@@ -123,9 +123,9 @@ function getSliderDefaults(config) {
   };
 }
 
-function getAgentDefaults(config, packageJson) {
+function getAgentDefaults(config) {
   return {
-    version: stringValue(packageJson.version, "0.1.0"),
+    version: getGitVersion(),
     folderUrl: stringValue(config.folder_url, ""),
     host: stringValue(config.host, "127.0.0.1"),
     port: positiveInteger(config.port, 8788),
@@ -139,6 +139,29 @@ function getAgentDefaults(config, packageJson) {
     chromePath: stringValue(config.chrome_path, ""),
     updateUrl: stringValue(config.update_url, "")
   };
+}
+
+function getGitVersion() {
+  try {
+    const version = execFileSync("git", ["describe", "--tags", "--dirty", "--always"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+
+    if (/^[0-9a-f]{7,}(-dirty)?$/i.test(version)) {
+      const count = execFileSync("git", ["rev-list", "--count", "HEAD"], {
+        cwd: root,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"]
+      }).trim();
+      return `0.0.${count}-${version}`;
+    }
+
+    return version || "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
 }
 
 function formatAgentDefaults(source, defaults) {
