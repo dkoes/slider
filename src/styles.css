@@ -51,6 +51,14 @@ body {
   z-index: 1;
 }
 
+.slide.reverse-enter {
+  transform: translateX(-100%);
+}
+
+.slide.reverse-exit {
+  transform: translateX(100%);
+}
+
 .four-mode .slide {
   width: 50%;
   height: 50%;

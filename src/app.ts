@@ -532,7 +532,7 @@ function formatAge(ageSeconds: number): string {
   return `${Math.round(ageSeconds / 3600)} hours`;
 }
 
-async function showSlide(slide: SlideItem): Promise<void> {
+async function showSlide(slide: SlideItem, direction: "next" | "previous" = "next"): Promise<void> {
   if (appMode === "announcements" || appMode === "posters" || appMode === "poster") {
     stage.querySelectorAll(".lab-view, .cat-stream").forEach((node) => node.remove());
   }
@@ -543,17 +543,20 @@ async function showSlide(slide: SlideItem): Promise<void> {
   // see a real "before" and "after" state.
   const next = document.createElement("article");
   next.className = "slide";
+  next.classList.toggle("reverse-enter", direction === "previous");
   next.setAttribute("aria-label", slide.name);
   next.append(createInteractiveViewport(slide));
   stage.append(next);
 
   await waitForSlideReady(next);
   await waitForPaint();
-  activeSlide?.classList.remove("active");
-  activeSlide?.classList.add("exiting");
+  const previous = activeSlide;
+  previous?.classList.remove("active");
+  previous?.classList.toggle("reverse-exit", direction === "previous");
+  previous?.classList.add("exiting");
+  next.classList.remove("reverse-enter");
   next.classList.add("active");
 
-  const previous = activeSlide;
   activeSlide = next;
   resetTransform();
   showDebugTitle(slide.name);
@@ -892,7 +895,7 @@ function createPosterSelectorButton(item: SlideItem, index: number): HTMLElement
   return button;
 }
 
-function showPoster(index: number): void {
+function showPoster(index: number, direction: "next" | "previous" = "next"): void {
   const item = posterItems[index];
   if (!item) {
     return;
@@ -901,7 +904,7 @@ function showPoster(index: number): void {
   setAppMode("poster");
   posterIndex = index;
   pauseForInteraction();
-  void showSlide(item);
+  void showSlide(item, direction);
 }
 
 async function advanceFourSlides(): Promise<void> {
@@ -1854,13 +1857,13 @@ function showPreviousSlide(): void {
   pauseForInteraction();
 
   if (appMode === "poster" && posterItems.length > 0) {
-    showPoster((posterIndex - 1 + posterItems.length) % posterItems.length);
+    showPoster((posterIndex - 1 + posterItems.length) % posterItems.length, "previous");
     return;
   }
 
   if (appMode === "posters" && posterSlideshowItems.length > 0) {
     posterSlideshowIndex = (posterSlideshowIndex - 1 + posterSlideshowItems.length) % posterSlideshowItems.length;
-    void showSlide(posterSlideshowItems[posterSlideshowIndex]);
+    void showSlide(posterSlideshowItems[posterSlideshowIndex], "previous");
     return;
   }
 
@@ -1872,7 +1875,7 @@ function showPreviousSlide(): void {
     rewindFourSlides();
   } else {
     slideIndex = (slideIndex - 1 + slides.length) % slides.length;
-    void showSlide(slides[slideIndex]);
+    void showSlide(slides[slideIndex], "previous");
   }
 }
 
