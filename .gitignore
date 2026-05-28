@@ -5,6 +5,7 @@ slider_data/
 slider_config.json
 .DS_Store
 __pycache__/
+release/
 *.pyc
 *.pyo
 *.spec
