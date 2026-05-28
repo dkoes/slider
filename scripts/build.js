@@ -108,6 +108,7 @@ function getSliderDefaults(config) {
     panPosters: booleanValue(config.pan_posters, true),
     panFraction: fractionValue(config.pan_fraction, 0.85),
     pdfCacheSize: positiveNumber(firstDefined(config.pdf_cache_size, config.pdf_cache), 200),
+    pdfDocumentCache: booleanValue(firstDefined(config.pdf_document_cache, config.document_cache), true),
     pdfRenderCache: booleanValue(firstDefined(config.pdf_render_cache, config.render_cache), false),
     pdfMaxZoomRenderScale: positiveNumber(firstDefined(config.pdf_max_zoom_render_scale, config.pdf_zoom_render_scale), 5),
     debug: booleanValue(config.debug, false)
@@ -158,6 +159,7 @@ function formatSliderDefaults(defaults) {
     ["SLIDER_PAN_POSTERS", defaults.panPosters],
     ["SLIDER_PAN_FRACTION", defaults.panFraction],
     ["SLIDER_PDF_CACHE_SIZE", defaults.pdfCacheSize],
+    ["SLIDER_PDF_DOCUMENT_CACHE", defaults.pdfDocumentCache],
     ["SLIDER_PDF_RENDER_CACHE", defaults.pdfRenderCache],
     ["SLIDER_PDF_MAX_ZOOM_RENDER_SCALE", defaults.pdfMaxZoomRenderScale],
     ["SLIDER_DEBUG", defaults.debug]

@@ -16,6 +16,7 @@ interface SliderGlobals {
   SLIDER_PAN_POSTERS?: boolean;
   SLIDER_PAN_FRACTION?: number;
   SLIDER_PDF_CACHE_SIZE?: number;
+  SLIDER_PDF_DOCUMENT_CACHE?: boolean;
   SLIDER_PDF_RENDER_CACHE?: boolean;
   SLIDER_PDF_MAX_ZOOM_RENDER_SCALE?: number;
   SLIDER_DEBUG?: boolean;
@@ -91,6 +92,7 @@ interface SliderConfig {
   panPosters: boolean;
   panFraction: number;
   pdfCacheSize: number;
+  pdfDocumentCache: boolean;
   pdfRenderCache: boolean;
   pdfMaxZoomRenderScale: number;
   debug: boolean;
@@ -364,6 +366,7 @@ function getConfig(): SliderConfig {
     : Number(globals.SLIDER_LIVE_STREAM_MINUTES);
   const rawPdfCacheSize = params.get("pdf_cache_size");
   const parsedPdfCacheSize = rawPdfCacheSize ? Number(rawPdfCacheSize) : Number(globals.SLIDER_PDF_CACHE_SIZE);
+  const pdfDocumentCache = parseBooleanParam(params.get("pdf_document_cache"), globals.SLIDER_PDF_DOCUMENT_CACHE ?? true);
   const pdfRenderCache = parseBooleanParam(params.get("pdf_render_cache"), globals.SLIDER_PDF_RENDER_CACHE ?? false);
   const rawPdfMaxZoomRenderScale = params.get("pdf_max_zoom_render_scale");
   const parsedPdfMaxZoomRenderScale = rawPdfMaxZoomRenderScale
@@ -387,6 +390,7 @@ function getConfig(): SliderConfig {
     panPosters,
     panFraction: Number.isFinite(parsedPanFraction) && parsedPanFraction > 0 && parsedPanFraction <= 1 ? parsedPanFraction : 0.85,
     pdfCacheSize: Number.isFinite(parsedPdfCacheSize) && parsedPdfCacheSize >= 0 ? Math.floor(parsedPdfCacheSize) : 200,
+    pdfDocumentCache,
     pdfRenderCache,
     pdfMaxZoomRenderScale: Number.isFinite(parsedPdfMaxZoomRenderScale) && parsedPdfMaxZoomRenderScale > 0 ? parsedPdfMaxZoomRenderScale : 5,
     debug: parseBooleanParam(params.get("debug"), Boolean(globals.SLIDER_DEBUG))
@@ -1250,6 +1254,19 @@ async function renderPdfPageToCanvas(
   viewportSize: { width: number; height: number },
   outputScale = 1
 ): Promise<PdfRenderResult> {
+  try {
+    return await renderPdfPageToCanvasOnce(slide, viewportSize, outputScale);
+  } catch (error) {
+    invalidatePdfDocument(slide);
+    return renderPdfPageToCanvasOnce(slide, viewportSize, outputScale);
+  }
+}
+
+async function renderPdfPageToCanvasOnce(
+  slide: SlideItem,
+  viewportSize: { width: number; height: number },
+  outputScale = 1
+): Promise<PdfRenderResult> {
   if (!getPdfJsLib()) {
     throw new Error("PDF.js is not available.");
   }
@@ -1288,7 +1305,11 @@ async function renderPdfPageToCanvas(
 }
 
 function getPdfDocument(slide: SlideItem): Promise<PdfDocumentProxy> {
-  const key = `${slide.url}|${slide.modified || ""}`;
+  if (!config.pdfDocumentCache) {
+    return loadPdfDocument(slide);
+  }
+
+  const key = getPdfDocumentCacheKey(slide);
   const cached = pdfDocumentCache.get(key);
   if (cached) {
     pdfDocumentCache.delete(key);
@@ -1296,12 +1317,7 @@ function getPdfDocument(slide: SlideItem): Promise<PdfDocumentProxy> {
     return cached;
   }
 
-  const pdfJs = getPdfJsLib();
-  if (!pdfJs) {
-    return Promise.reject(new Error("PDF.js is not available."));
-  }
-
-  const promise = pdfJs.getDocument(slide.url).promise;
+  const promise = loadPdfDocument(slide);
   pdfDocumentCache.set(key, promise);
   trimPdfDocumentCache();
   void promise.then((documentProxy) => {
@@ -1318,6 +1334,27 @@ function getPdfDocument(slide: SlideItem): Promise<PdfDocumentProxy> {
     }
   });
   return promise;
+}
+
+function loadPdfDocument(slide: SlideItem): Promise<PdfDocumentProxy> {
+  const pdfJs = getPdfJsLib();
+  if (!pdfJs) {
+    return Promise.reject(new Error("PDF.js is not available."));
+  }
+
+  return pdfJs.getDocument(slide.url).promise;
+}
+
+function invalidatePdfDocument(slide: SlideItem): void {
+  const key = getPdfDocumentCacheKey(slide);
+  pdfDocumentCache.delete(key);
+  if (config.debug) {
+    console.warn("[slider cache] invalidated pdf-document", { key });
+  }
+}
+
+function getPdfDocumentCacheKey(slide: SlideItem): string {
+  return `${slide.url}|${slide.modified || ""}`;
 }
 
 function getPdfCacheKey(slide: SlideItem, viewportSize: { width: number; height: number }): string {
@@ -1347,7 +1384,7 @@ function trimPdfRenderCache(): void {
 }
 
 function trimPdfDocumentCache(): void {
-  if (config.pdfCacheSize <= 0) {
+  if (!config.pdfDocumentCache || config.pdfCacheSize <= 0) {
     pdfDocumentCache.clear();
     return;
   }
@@ -1402,7 +1439,7 @@ function formatBytes(bytes: number): string {
 }
 
 function preloadUpcomingPdfs(): void {
-  if (config.pdfCacheSize <= 0 || !getPdfJsLib()) {
+  if (!config.pdfDocumentCache || config.pdfCacheSize <= 0 || !getPdfJsLib()) {
     return;
   }
 

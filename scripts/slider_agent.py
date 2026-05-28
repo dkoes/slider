@@ -230,6 +230,7 @@ def format_runtime_slider_defaults(config: dict[str, Any]) -> str:
     add_bool_assignment(assignments, "SLIDER_PAN_POSTERS", config.get("pan_posters"))
     add_fraction_assignment(assignments, "SLIDER_PAN_FRACTION", config.get("pan_fraction"))
     add_number_assignment(assignments, "SLIDER_PDF_CACHE_SIZE", first_config_value(config, "pdf_cache_size", "pdf_cache"), minimum=0)
+    add_bool_assignment(assignments, "SLIDER_PDF_DOCUMENT_CACHE", first_config_value(config, "pdf_document_cache", "document_cache"))
     add_bool_assignment(assignments, "SLIDER_PDF_RENDER_CACHE", first_config_value(config, "pdf_render_cache", "render_cache"))
     add_number_assignment(
         assignments,
