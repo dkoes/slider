@@ -12,7 +12,7 @@ interface SliderGlobals {
   SLIDER_SYNC_STALE_AFTER_SECONDS?: number;
   SLIDER_LIVE_STREAM_MINUTES?: number;
   SLIDER_LIVE_STREAMS?: Record<string, string>;
-  SLIDER_FOUR_UP?: boolean;
+  SLIDER_FOUR_UP?: boolean | "auto";
   SLIDER_PAN_POSTERS?: boolean;
   SLIDER_PAN_FRACTION?: number;
   SLIDER_PDF_CACHE_SIZE?: number;
@@ -144,6 +144,7 @@ const postersButton = mustGetElement("menu-posters") as HTMLButtonElement;
 const liveStreamMenu = mustGetElement("live-stream-menu");
 const fullscreenDivider = mustGetElement("fullscreen-divider");
 const fullscreenButton = mustGetElement("menu-fullscreen") as HTMLButtonElement;
+const updateButton = mustGetElement("menu-update") as HTMLButtonElement;
 const labsMenu = mustGetElement("labs-menu");
 const previousButton = mustGetElement("previous-slide") as HTMLButtonElement;
 const nextButton = mustGetElement("next-slide") as HTMLButtonElement;
@@ -264,6 +265,9 @@ function wireControls(): void {
   fullscreenButton.addEventListener("click", () => {
     void enterFullscreen();
   });
+  updateButton.addEventListener("click", () => {
+    void checkForUpdates();
+  });
   liveStreamReset.addEventListener("click", (event) => {
     event.stopPropagation();
     resetLiveStreamCountdown();
@@ -312,6 +316,24 @@ function renderLiveStreamMenu(): void {
     button.textContent = stream.name;
     button.addEventListener("click", () => showLiveStream(stream));
     liveStreamMenu.append(button);
+  }
+}
+
+async function checkForUpdates(): Promise<void> {
+  setMenuOpen(false);
+  updateButton.disabled = true;
+  showBanner("Checking for updates...");
+  try {
+    const response = await fetch("/update/check", { method: "POST", cache: "no-store" });
+    const payload = await response.json() as { message?: string; status?: string };
+    if (!response.ok) {
+      throw new Error(payload.message || `Update check failed (${response.status}).`);
+    }
+    showBanner(payload.message || "Update check complete.");
+  } catch (error: unknown) {
+    showBanner(`Update check failed: ${getErrorMessage(error)}`);
+  } finally {
+    updateButton.disabled = false;
   }
 }
 
@@ -379,7 +401,7 @@ function getConfig(): SliderConfig {
   const parsedPdfMaxZoomRenderScale = rawPdfMaxZoomRenderScale
     ? Number(rawPdfMaxZoomRenderScale)
     : Number(globals.SLIDER_PDF_MAX_ZOOM_RENDER_SCALE);
-  const fourUp = parseBooleanParam(params.get("four_up"), Boolean(globals.SLIDER_FOUR_UP));
+  const fourUp = resolveFourUp(firstDefined(params.get("four_up"), globals.SLIDER_FOUR_UP, false));
   const panPosters = parseBooleanParam(params.get("pan_posters"), globals.SLIDER_PAN_POSTERS ?? true);
   const rawPanFraction = params.get("pan_fraction");
   const parsedPanFraction = rawPanFraction ? Number(rawPanFraction) : Number(globals.SLIDER_PAN_FRACTION);
@@ -409,6 +431,18 @@ function normalizeLiveStreams(streams: Record<string, string>): LiveStreamConfig
   return Object.entries(streams)
     .map(([name, url]) => ({ name: name.trim(), url: String(url || "").trim() }))
     .filter((stream) => stream.name && stream.url);
+}
+
+function firstDefined(...values: unknown[]): unknown {
+  return values.find((value) => value !== undefined && value !== null && value !== "");
+}
+
+function resolveFourUp(value: unknown): boolean {
+  if (String(value).trim().toLowerCase() === "auto") {
+    return window.innerWidth >= 3840 && window.innerHeight >= 2160;
+  }
+
+  return parseBooleanParam(value == null ? null : String(value), false);
 }
 
 function configurePdfJs(): void {

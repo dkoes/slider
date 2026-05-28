@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "preview": "node scripts/preview.js",
     "proxy": "node scripts/cors-proxy.js",
+    "release": "bash scripts/package_release.sh",
     "agent": "python3 build/slider_agent.py",
     "agent:src": "python3 scripts/slider_agent.py",
     "dev": "nodemon --watch src --watch scripts/build.js --watch scripts/slider_agent.py --watch slider_config.json --ext ts,css,html,js,py,json --exec \"npm run build && python3 build/slider_agent.py\""

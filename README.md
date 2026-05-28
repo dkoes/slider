@@ -33,9 +33,11 @@ Edit `slider_config.json`. The example file lists every supported setting and it
 }
 ```
 
-`slider_config.json` is ignored by git so private or environment-specific folder URLs are not committed. Agent settings are read when the Python agent starts. App settings, such as `time_per_slide_seconds`, `poster_time_seconds`, `interactive_pause_seconds`, `live_streams`, `four_up`, `pan_posters`, `pan_fraction`, `pdf_cache_size`, `pdf_document_cache`, `pdf_render_cache`, `pdf_max_zoom_render_scale`, and `debug`, are embedded as defaults when you run `npm run build`, and a runtime `slider_config.json` next to the Python agent or packaged executable can override them when `slider.html` is served. URL parameters remain the final override. Parsed PDF documents are cached by default; set `pdf_document_cache: false` to reload PDF.js documents for each render. Rendered PDF canvases are not cached by default; set `pdf_render_cache: true` to enable that cache. `pdf_max_zoom_render_scale` caps high-resolution PDF poster renders and defaults to `5`.
+`slider_config.json` is ignored by git so private or environment-specific folder URLs are not committed. Agent settings are read when the Python agent starts. App settings, such as `time_per_slide_seconds`, `poster_time_seconds`, `interactive_pause_seconds`, `live_streams`, `four_up`, `pan_posters`, `pan_fraction`, `pdf_cache_size`, `pdf_document_cache`, `pdf_render_cache`, `pdf_max_zoom_render_scale`, and `debug`, are embedded as defaults when you run `npm run build`, and a runtime `slider_config.json` next to the Python agent or packaged executable can override them when `slider.html` is served. URL parameters remain the final override. `four_up` can be `true`, `false`, or `"auto"`; auto enables four-up mode only when the initial viewport is at least 3840x2160. Parsed PDF documents are cached by default; set `pdf_document_cache: false` to reload PDF.js documents for each render. Rendered PDF canvases are not cached by default; set `pdf_render_cache: true` to enable that cache. `pdf_max_zoom_render_scale` caps high-resolution PDF poster renders and defaults to `5`.
 
 You can also provide core agent settings with command-line flags or environment variables, such as `--folder` or `SLIDER_FOLDER_URL`. On Windows, the agent launches Chrome in kiosk mode by default after the server starts. Set `chrome_path` or `SLIDER_CHROME_PATH` to use a specific Chrome executable, or disable it with `autolaunch: false` or `--no-autolaunch`. The kiosk launch URL includes `kiosk=1` so the app hides its fullscreen menu option.
+
+Set `update_url` in `slider_config.json` to a JSON manifest URL to enable the menu's `Check for Updates` action. This value can be baked into `build/slider_agent.py` by `npm run build`, and a runtime `slider_config.json` next to the packaged executable can override it. It is not stored in checked-in source code and is not accepted from environment variables or command-line flags. The manifest should include `version`, `url`, and `sha256`; the Windows packaged executable downloads the new exe, verifies its SHA-256, replaces itself with a helper script, and relaunches.
 
 ## Run Locally
 
@@ -128,3 +130,11 @@ pyinstaller --onefile build/slider_agent.py
 ```
 
 No separate `slider.html` is needed. The `npm run build` step embeds both the slider UI and the current `slider_config.json` defaults into `build/slider_agent.py`. A `slider_config.json` next to the executable can override embedded agent and app defaults at runtime; environment variables and command-line flags can also override agent settings. The executable creates and updates `slider_data/` next to where it runs unless `--data-dir` is provided.
+
+To package and publish an updater release from Windows Git Bash:
+
+```sh
+scripts/package_release.sh user@bits.csb.pitt.edu:/path/to/slider_updates https://bits.csb.pitt.edu/slider_updates
+```
+
+The script runs `npm run build`, packages `dist/slider.exe` with PyInstaller, copies it to `release/slider-<version>.exe`, writes `release/latest.json`, and uploads both files with `scp`. The manifest points at the public base URL you pass as the second argument. Set the release version in `package.json` before running it.

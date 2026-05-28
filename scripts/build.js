@@ -36,18 +36,19 @@ if (diagnostics.length > 0) {
   reportDiagnostics(diagnostics);
 }
 
-const [template, css, js, agentSource, pdfJs, pdfWorkerJs] = await Promise.all([
+const [template, css, js, agentSource, pdfJs, pdfWorkerJs, packageJson] = await Promise.all([
   readFile(resolve(root, "src/template.html"), "utf8"),
   readFile(resolve(root, "src/styles.css"), "utf8"),
   readFile(resolve(jsBuildDir, "app.js"), "utf8"),
   readFile(resolve(root, "scripts/slider_agent.py"), "utf8"),
   readFile(resolve(root, "node_modules/pdfjs-dist/legacy/build/pdf.min.mjs"), "utf8"),
-  readFile(resolve(root, "node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs"), "utf8")
+  readFile(resolve(root, "node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs"), "utf8"),
+  readOptionalJson(resolve(root, "package.json"))
 ]);
 
 const sliderConfig = await readOptionalJson(resolve(root, "slider_config.json"));
 const sliderDefaults = getSliderDefaults(sliderConfig);
-const agentDefaults = getAgentDefaults(sliderConfig);
+const agentDefaults = getAgentDefaults(sliderConfig, packageJson);
 const html = template
   .replace("__SLIDER_DEFAULTS__", () => formatSliderDefaults(sliderDefaults))
   .replace("__RUNTIME_SLIDER_DEFAULTS__", () => "      /* __RUNTIME_SLIDER_DEFAULTS__ */")
@@ -111,7 +112,7 @@ function getSliderDefaults(config) {
     ),
     liveStreamMinutes: positiveNumber(config.live_stream_minutes, 30),
     liveStreams: objectOfStrings(config.live_streams, defaultLiveStreams),
-    fourUp: booleanValue(firstDefined(config.four_up, config.four), false),
+    fourUp: fourUpValue(firstDefined(config.four_up, config.four), false),
     panPosters: booleanValue(config.pan_posters, true),
     panFraction: fractionValue(config.pan_fraction, 0.85),
     pdfCacheSize: positiveNumber(firstDefined(config.pdf_cache_size, config.pdf_cache), 200),
@@ -122,8 +123,9 @@ function getSliderDefaults(config) {
   };
 }
 
-function getAgentDefaults(config) {
+function getAgentDefaults(config, packageJson) {
   return {
+    version: stringValue(packageJson.version, "0.1.0"),
     folderUrl: stringValue(config.folder_url, ""),
     host: stringValue(config.host, "127.0.0.1"),
     port: positiveInteger(config.port, 8788),
@@ -134,12 +136,15 @@ function getAgentDefaults(config) {
     ),
     dataDir: stringValue(config.data_dir, "slider_data"),
     autolaunch: booleanValue(firstDefined(config.autolaunch, config.launch_chrome_kiosk), true),
-    chromePath: stringValue(config.chrome_path, "")
+    chromePath: stringValue(config.chrome_path, ""),
+    updateUrl: stringValue(config.update_url, "")
   };
 }
 
 function formatAgentDefaults(source, defaults) {
-  return replacePythonConstant(source, "DEFAULT_FOLDER_URL", defaults.folderUrl)
+  return replacePythonConstant(source, "APP_VERSION", defaults.version)
+    .replace(/^DEFAULT_UPDATE_URL = .+$/m, `DEFAULT_UPDATE_URL = ${JSON.stringify(defaults.updateUrl)}`)
+    .replace(/^DEFAULT_FOLDER_URL = .+$/m, `DEFAULT_FOLDER_URL = ${JSON.stringify(defaults.folderUrl)}`)
     .replace(/^DEFAULT_HOST = .+$/m, `DEFAULT_HOST = ${JSON.stringify(defaults.host)}`)
     .replace(/^DEFAULT_PORT = .+$/m, `DEFAULT_PORT = ${JSON.stringify(defaults.port)}`)
     .replace(/^DEFAULT_SYNC_INTERVAL_SECONDS = .+$/m, `DEFAULT_SYNC_INTERVAL_SECONDS = ${JSON.stringify(defaults.syncIntervalSeconds)}`)
@@ -238,4 +243,12 @@ function booleanValue(value, fallback) {
   }
 
   return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
+}
+
+function fourUpValue(value, fallback) {
+  if (String(value || "").trim().toLowerCase() === "auto") {
+    return "auto";
+  }
+
+  return booleanValue(value, fallback);
 }

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import hashlib
 import http.cookiejar
 import json
 import mimetypes
@@ -43,6 +44,8 @@ DEFAULT_STALE_AFTER_SECONDS = 1800
 DEFAULT_DATA_DIR = "slider_data"
 DEFAULT_AUTOLAUNCH = True
 DEFAULT_CHROME_PATH = ""
+DEFAULT_UPDATE_URL = ""
+APP_VERSION = "0.1.0"
 EMBEDDED_SLIDER_HTML = None
 
 
@@ -57,6 +60,7 @@ class AgentConfig:
     stale_after_seconds: int
     autolaunch: bool
     chrome_path: str
+    update_url: str
     once: bool
     config_path: Path
 
@@ -131,6 +135,7 @@ def parse_args() -> AgentConfig:
         stale_after_seconds=max(30, args.stale_after),
         autolaunch=args.autolaunch,
         chrome_path=args.chrome_path,
+        update_url=get_config_string(local_config, "update_url", DEFAULT_UPDATE_URL),
         once=args.once,
         config_path=root / "slider_config.json",
     )
@@ -157,6 +162,14 @@ def get_config_value(config: dict[str, Any], key: str, env_name: str, fallback: 
         return str(value)
 
     return str(fallback)
+
+
+def get_config_string(config: dict[str, Any], key: str, fallback: str = "") -> str:
+    value = config.get(key)
+    if value not in (None, ""):
+        return str(value)
+
+    return fallback
 
 
 def get_config_bool(config: dict[str, Any], key: str, env_name: str, fallback: bool) -> bool:
@@ -227,7 +240,7 @@ def format_runtime_slider_defaults(config: dict[str, Any]) -> str:
     )
     add_number_assignment(assignments, "SLIDER_LIVE_STREAM_MINUTES", config.get("live_stream_minutes"))
     add_object_assignment(assignments, "SLIDER_LIVE_STREAMS", config.get("live_streams"))
-    add_bool_assignment(assignments, "SLIDER_FOUR_UP", first_config_value(config, "four_up", "four"))
+    add_four_up_assignment(assignments, "SLIDER_FOUR_UP", first_config_value(config, "four_up", "four"))
     add_bool_assignment(assignments, "SLIDER_PAN_POSTERS", config.get("pan_posters"))
     add_fraction_assignment(assignments, "SLIDER_PAN_FRACTION", config.get("pan_fraction"))
     add_number_assignment(assignments, "SLIDER_PDF_CACHE_SIZE", first_config_value(config, "pdf_cache_size", "pdf_cache"), minimum=0)
@@ -295,6 +308,17 @@ def add_fraction_assignment(assignments: list[str], name: str, value: Any) -> No
 
 def add_bool_assignment(assignments: list[str], name: str, value: Any) -> None:
     if value in (None, ""):
+        return
+
+    assignments.append(f"      window.{name} = {json.dumps(parse_bool(value))};")
+
+
+def add_four_up_assignment(assignments: list[str], name: str, value: Any) -> None:
+    if value in (None, ""):
+        return
+
+    if str(value).strip().lower() == "auto":
+        assignments.append(f"      window.{name} = \"auto\";")
         return
 
     assignments.append(f"      window.{name} = {json.dumps(parse_bool(value))};")
@@ -370,6 +394,140 @@ def get_slider_url(config: AgentConfig, kiosk: bool = False) -> str:
     host = "127.0.0.1" if config.host in {"0.0.0.0", "::"} else config.host
     query = "?kiosk=1" if kiosk else ""
     return f"http://{host}:{config.port}/slider.html{query}"
+
+
+def check_for_update(config: AgentConfig) -> dict[str, Any]:
+    if not config.update_url:
+        return {"status": "disabled", "message": "No update_url is configured.", "version": APP_VERSION}
+
+    latest = fetch_update_manifest(config.update_url)
+    latest_version = str(latest.get("version") or "").strip()
+    download_url = str(latest.get("url") or "").strip()
+    expected_sha256 = str(latest.get("sha256") or "").strip().lower()
+    if not latest_version or not download_url or not expected_sha256:
+        raise RuntimeError("Update manifest must include version, url, and sha256.")
+
+    if compare_versions(latest_version, APP_VERSION) <= 0:
+        return {
+            "status": "current",
+            "message": f"Slider is up to date ({APP_VERSION}).",
+            "version": APP_VERSION,
+            "latestVersion": latest_version,
+        }
+
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return {
+            "status": "available",
+            "message": f"Update {latest_version} is available, but automatic replacement is only supported by the Windows executable.",
+            "version": APP_VERSION,
+            "latestVersion": latest_version,
+        }
+
+    new_exe = Path(sys.executable).with_suffix(Path(sys.executable).suffix + ".new")
+    download_update(download_url, new_exe)
+    actual_sha256 = sha256_file(new_exe)
+    if actual_sha256.lower() != expected_sha256:
+        with contextlib.suppress(OSError):
+            new_exe.unlink()
+        raise RuntimeError("Downloaded update did not match the expected SHA-256.")
+
+    remove_mark_of_the_web(new_exe)
+    helper = write_update_helper(Path(sys.executable), new_exe)
+    subprocess.Popen([str(helper), str(os.getpid())], close_fds=True)
+    threading.Timer(1.0, lambda: os._exit(0)).start()
+    return {
+        "status": "updating",
+        "message": f"Installing slider {latest_version}; the app will restart.",
+        "version": APP_VERSION,
+        "latestVersion": latest_version,
+    }
+
+
+def fetch_update_manifest(url: str) -> dict[str, Any]:
+    request = urllib.request.Request(url, headers=default_headers("application/json"))
+    with urllib.request.urlopen(request, timeout=30) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError("Update manifest was not a JSON object.")
+    return payload
+
+
+def download_update(url: str, target: Path) -> None:
+    request = urllib.request.Request(url, headers=default_headers("application/octet-stream"))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+    os.close(fd)
+    temp_path = Path(temp_name)
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response, temp_path.open("wb") as output:
+            shutil.copyfileobj(response, output)
+        temp_path.replace(target)
+    except Exception:
+        with contextlib.suppress(OSError):
+            temp_path.unlink()
+        raise
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def remove_mark_of_the_web(path: Path) -> None:
+    with contextlib.suppress(OSError):
+        os.remove(str(path) + ":Zone.Identifier")
+
+
+def write_update_helper(current_exe: Path, new_exe: Path) -> Path:
+    helper = current_exe.with_suffix(".update.cmd")
+    old_exe = current_exe.with_suffix(current_exe.suffix + ".old")
+    script = f"""@echo off
+setlocal
+set "PID=%~1"
+set "CURRENT={current_exe}"
+set "NEW={new_exe}"
+set "OLD={old_exe}"
+:wait
+tasklist /FI "PID eq %PID%" | find "%PID%" >nul
+if not errorlevel 1 (
+  timeout /t 1 /nobreak >nul
+  goto wait
+)
+move /Y "%CURRENT%" "%OLD%" >nul
+if errorlevel 1 goto rollback
+move /Y "%NEW%" "%CURRENT%" >nul
+if errorlevel 1 goto rollback
+start "" "%CURRENT%"
+timeout /t 3 /nobreak >nul
+del "%OLD%" >nul 2>nul
+del "%~f0" >nul 2>nul
+exit /b 0
+:rollback
+if exist "%OLD%" move /Y "%OLD%" "%CURRENT%" >nul
+del "%NEW%" >nul 2>nul
+start "" "%CURRENT%"
+del "%~f0" >nul 2>nul
+exit /b 1
+"""
+    helper.write_text(script, encoding="utf-8")
+    return helper
+
+
+def compare_versions(left: str, right: str) -> int:
+    left_parts = parse_version(left)
+    right_parts = parse_version(right)
+    max_len = max(len(left_parts), len(right_parts))
+    left_parts.extend([0] * (max_len - len(left_parts)))
+    right_parts.extend([0] * (max_len - len(right_parts)))
+    return (left_parts > right_parts) - (left_parts < right_parts)
+
+
+def parse_version(value: str) -> list[int]:
+    parts = re.findall(r"\d+", value)
+    return [int(part) for part in parts] or [0]
 
 
 def sync_loop(syncer: "SharePointSyncer", interval_seconds: int, after_first_sync: Any = None) -> None:
@@ -880,6 +1038,14 @@ def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
 
 def make_handler(config: AgentConfig) -> type[SimpleHTTPRequestHandler]:
     class SliderHandler(SimpleHTTPRequestHandler):
+        def send_json(self, status: int, payload: dict[str, Any]) -> None:
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_GET(self) -> None:
             parsed_path = urllib.parse.urlparse(self.path).path
             clean_path = posixpath.normpath(urllib.parse.unquote(parsed_path)).lstrip("/")
@@ -892,6 +1058,18 @@ def make_handler(config: AgentConfig) -> type[SimpleHTTPRequestHandler]:
                 return
 
             super().do_GET()
+
+        def do_POST(self) -> None:
+            parsed_path = urllib.parse.urlparse(self.path).path
+            clean_path = posixpath.normpath(urllib.parse.unquote(parsed_path)).lstrip("/")
+            if clean_path == "update/check":
+                try:
+                    self.send_json(200, check_for_update(config))
+                except Exception as error:  # noqa: BLE001 - report update failure to the menu action.
+                    self.send_json(500, {"status": "error", "message": str(error), "version": APP_VERSION})
+                return
+
+            self.send_error(404, "Not found")
 
         def do_HEAD(self) -> None:
             parsed_path = urllib.parse.urlparse(self.path).path
