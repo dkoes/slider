@@ -17,5 +17,6 @@
   "pan_fraction": 0.75,
   "pdf_cache_size": 200,
   "pdf_render_cache": false,
+  "pdf_max_zoom_render_scale": 5,
   "debug": false
 }

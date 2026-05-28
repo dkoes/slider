@@ -17,6 +17,7 @@ interface SliderGlobals {
   SLIDER_PAN_FRACTION?: number;
   SLIDER_PDF_CACHE_SIZE?: number;
   SLIDER_PDF_RENDER_CACHE?: boolean;
+  SLIDER_PDF_MAX_ZOOM_RENDER_SCALE?: number;
   SLIDER_DEBUG?: boolean;
   SLIDER_PDF_WORKER_SOURCE?: string;
 }
@@ -91,6 +92,7 @@ interface SliderConfig {
   panFraction: number;
   pdfCacheSize: number;
   pdfRenderCache: boolean;
+  pdfMaxZoomRenderScale: number;
   debug: boolean;
 }
 
@@ -363,6 +365,10 @@ function getConfig(): SliderConfig {
   const rawPdfCacheSize = params.get("pdf_cache_size");
   const parsedPdfCacheSize = rawPdfCacheSize ? Number(rawPdfCacheSize) : Number(globals.SLIDER_PDF_CACHE_SIZE);
   const pdfRenderCache = parseBooleanParam(params.get("pdf_render_cache"), globals.SLIDER_PDF_RENDER_CACHE ?? false);
+  const rawPdfMaxZoomRenderScale = params.get("pdf_max_zoom_render_scale");
+  const parsedPdfMaxZoomRenderScale = rawPdfMaxZoomRenderScale
+    ? Number(rawPdfMaxZoomRenderScale)
+    : Number(globals.SLIDER_PDF_MAX_ZOOM_RENDER_SCALE);
   const fourUp = parseBooleanParam(params.get("four_up"), Boolean(globals.SLIDER_FOUR_UP));
   const panPosters = parseBooleanParam(params.get("pan_posters"), globals.SLIDER_PAN_POSTERS ?? true);
   const rawPanFraction = params.get("pan_fraction");
@@ -382,6 +388,7 @@ function getConfig(): SliderConfig {
     panFraction: Number.isFinite(parsedPanFraction) && parsedPanFraction > 0 && parsedPanFraction <= 1 ? parsedPanFraction : 0.85,
     pdfCacheSize: Number.isFinite(parsedPdfCacheSize) && parsedPdfCacheSize >= 0 ? Math.floor(parsedPdfCacheSize) : 200,
     pdfRenderCache,
+    pdfMaxZoomRenderScale: Number.isFinite(parsedPdfMaxZoomRenderScale) && parsedPdfMaxZoomRenderScale > 0 ? parsedPdfMaxZoomRenderScale : 5,
     debug: parseBooleanParam(params.get("debug"), Boolean(globals.SLIDER_DEBUG))
   };
 }
@@ -1151,21 +1158,29 @@ async function renderPdfPage(
   }
 
   const viewportSize = await getPdfViewportSize(container);
+  const shouldUseRenderCache = options.useCache !== false && config.pdfRenderCache;
   const rendered = options.useCache === false
     ? await renderPdfPageToCanvas(slide, viewportSize, options.outputScale || 1)
     : await getRenderedPdfPage(slide, viewportSize);
 
-  applyRenderedPdfPage(rendered, container, canvas, options.outputScale || 1);
+  applyRenderedPdfPage(rendered, container, canvas, {
+    outputScale: options.outputScale || 1,
+    releaseSourceCanvas: !shouldUseRenderCache
+  });
 }
 
 function applyRenderedPdfPage(
   rendered: PdfRenderResult,
   container: HTMLElement,
   canvas: HTMLCanvasElement,
-  outputScale = 1
+  options: { outputScale?: number; releaseSourceCanvas?: boolean } = {}
 ): void {
+  const outputScale = options.outputScale || 1;
   const currentScale = Number(container.dataset.renderScale || "0");
   if (currentScale > outputScale + 0.05) {
+    if (options.releaseSourceCanvas) {
+      releaseCanvas(rendered.canvas);
+    }
     return;
   }
 
@@ -1183,8 +1198,16 @@ function applyRenderedPdfPage(
   }
 
   context.drawImage(rendered.canvas, 0, 0);
+  if (options.releaseSourceCanvas) {
+    releaseCanvas(rendered.canvas);
+  }
   container.dataset.renderScale = String(outputScale);
   container.dispatchEvent(new Event("pdf-rendered"));
+}
+
+function releaseCanvas(canvas: HTMLCanvasElement): void {
+  canvas.width = 0;
+  canvas.height = 0;
 }
 
 async function getRenderedPdfPage(slide: SlideItem, viewportSize: { width: number; height: number }): Promise<PdfRenderResult> {
@@ -1760,7 +1783,7 @@ function schedulePosterPdfZoomRender(): void {
     return;
   }
 
-  const requestedScale = Number(activeTransform.scale.toFixed(2));
+  const requestedScale = Number(Math.min(activeTransform.scale, config.pdfMaxZoomRenderScale).toFixed(2));
   if (target !== pdfZoomRenderTarget) {
     pdfZoomRenderTarget = target;
     pdfZoomRenderScale = 1;
@@ -1793,7 +1816,7 @@ async function renderPosterPdfForZoom(
     if (token !== pdfZoomRenderToken || target !== activeTransformTarget) {
       return;
     }
-    applyRenderedPdfPage(rendered, container, canvas, scale);
+    applyRenderedPdfPage(rendered, container, canvas, { outputScale: scale, releaseSourceCanvas: true });
   } catch (error: unknown) {
     showBanner(`Unable to sharpen ${slide.name}: ${getErrorMessage(error)}`);
   }

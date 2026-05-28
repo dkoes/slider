@@ -109,6 +109,7 @@ function getSliderDefaults(config) {
     panFraction: fractionValue(config.pan_fraction, 0.85),
     pdfCacheSize: positiveNumber(firstDefined(config.pdf_cache_size, config.pdf_cache), 200),
     pdfRenderCache: booleanValue(firstDefined(config.pdf_render_cache, config.render_cache), false),
+    pdfMaxZoomRenderScale: positiveNumber(firstDefined(config.pdf_max_zoom_render_scale, config.pdf_zoom_render_scale), 5),
     debug: booleanValue(config.debug, false)
   };
 }
@@ -158,6 +159,7 @@ function formatSliderDefaults(defaults) {
     ["SLIDER_PAN_FRACTION", defaults.panFraction],
     ["SLIDER_PDF_CACHE_SIZE", defaults.pdfCacheSize],
     ["SLIDER_PDF_RENDER_CACHE", defaults.pdfRenderCache],
+    ["SLIDER_PDF_MAX_ZOOM_RENDER_SCALE", defaults.pdfMaxZoomRenderScale],
     ["SLIDER_DEBUG", defaults.debug]
   ];
 
