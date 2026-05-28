@@ -268,6 +268,10 @@ function wireControls(): void {
   updateButton.addEventListener("click", () => {
     void checkForUpdates();
   });
+  banner.addEventListener("click", (event) => {
+    event.stopPropagation();
+    hideBanner();
+  });
   liveStreamReset.addEventListener("click", (event) => {
     event.stopPropagation();
     resetLiveStreamCountdown();

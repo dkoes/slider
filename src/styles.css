@@ -631,6 +631,11 @@ body {
   transform: translate(-50%, 0);
 }
 
+#banner.visible {
+  cursor: pointer;
+  pointer-events: auto;
+}
+
 #status {
   bottom: 24px;
   background: rgba(17, 24, 32, 0.84);
