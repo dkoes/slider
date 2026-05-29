@@ -438,7 +438,7 @@ def check_for_update(config: AgentConfig) -> dict[str, Any]:
 
     remove_mark_of_the_web(new_exe)
     helper = write_update_helper(Path(sys.executable), new_exe)
-    subprocess.Popen([str(helper), str(os.getpid())], close_fds=True)
+    launch_update_helper(helper, os.getpid())
     threading.Timer(1.0, lambda: os._exit(0)).start()
     return {
         "status": "updating",
@@ -489,36 +489,63 @@ def remove_mark_of_the_web(path: Path) -> None:
 def write_update_helper(current_exe: Path, new_exe: Path) -> Path:
     helper = current_exe.with_suffix(".update.cmd")
     old_exe = current_exe.with_suffix(current_exe.suffix + ".old")
+    log_path = current_exe.with_suffix(".update.log")
     script = f"""@echo off
 setlocal
 set "PID=%~1"
 set "CURRENT={current_exe}"
 set "NEW={new_exe}"
 set "OLD={old_exe}"
+set "LOG={log_path}"
+echo [%date% %time%] Waiting for slider PID %PID% to exit. > "%LOG%"
 :wait
 tasklist /FI "PID eq %PID%" | find "%PID%" >nul
 if not errorlevel 1 (
   timeout /t 1 /nobreak >nul
   goto wait
 )
+echo [%date% %time%] Closing Chrome before replacement. >> "%LOG%"
+taskkill /F /T /IM chrome.exe >> "%LOG%" 2>>&1
+echo [%date% %time%] Replacing executable. >> "%LOG%"
 move /Y "%CURRENT%" "%OLD%" >nul
 if errorlevel 1 goto rollback
 move /Y "%NEW%" "%CURRENT%" >nul
 if errorlevel 1 goto rollback
-start "" "%CURRENT%"
+echo [%date% %time%] Starting updated slider. >> "%LOG%"
+start "Slider" /D "{current_exe.parent}" "%CURRENT%"
 timeout /t 3 /nobreak >nul
 del "%OLD%" >nul 2>nul
+echo [%date% %time%] Update helper completed. >> "%LOG%"
 del "%~f0" >nul 2>nul
 exit /b 0
 :rollback
+echo [%date% %time%] Update failed; rolling back. >> "%LOG%"
 if exist "%OLD%" move /Y "%OLD%" "%CURRENT%" >nul
 del "%NEW%" >nul 2>nul
-start "" "%CURRENT%"
+start "Slider" /D "{current_exe.parent}" "%CURRENT%"
 del "%~f0" >nul 2>nul
 exit /b 1
 """
     helper.write_text(script, encoding="utf-8")
     return helper
+
+
+def launch_update_helper(helper: Path, pid: int) -> None:
+    command = [
+        os.environ.get("COMSPEC", "cmd.exe"),
+        "/d",
+        "/c",
+        "start",
+        "Slider updater",
+        str(helper),
+        str(pid),
+    ]
+    creationflags = 0
+    if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+        creationflags |= subprocess.CREATE_NEW_PROCESS_GROUP
+    if hasattr(subprocess, "DETACHED_PROCESS"):
+        creationflags |= subprocess.DETACHED_PROCESS
+    subprocess.Popen(command, cwd=str(helper.parent), close_fds=True, creationflags=creationflags)
 
 
 def compare_versions(left: str, right: str) -> int:
