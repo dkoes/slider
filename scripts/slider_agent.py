@@ -495,6 +495,7 @@ def write_update_helper(current_exe: Path, new_exe: Path) -> Path:
     helper = current_exe.with_suffix(".update.cmd")
     old_exe = current_exe.with_suffix(current_exe.suffix + ".old")
     log_path = current_exe.with_suffix(".update.log")
+    cleanup_helper = helper.with_suffix(".cleanup.cmd")
     script = f"""@echo off
 setlocal
 set "PID=%~1"
@@ -502,6 +503,8 @@ set "CURRENT={current_exe}"
 set "NEW={new_exe}"
 set "OLD={old_exe}"
 set "LOG={log_path}"
+set "HELPER=%~f0"
+set "CLEANUP={cleanup_helper}"
 echo [%date% %time%] Waiting for slider PID %PID% to exit. > "%LOG%"
 :wait
 tasklist /FI "PID eq %PID%" | find "%PID%" >nul
@@ -521,15 +524,22 @@ start "Slider" /D "{current_exe.parent}" "%CURRENT%"
 timeout /t 3 /nobreak >nul
 del "%OLD%" >nul 2>nul
 echo [%date% %time%] Update helper completed. >> "%LOG%"
-del "%~f0" >nul 2>nul
+call :schedule_cleanup
 exit /b 0
 :rollback
 echo [%date% %time%] Update failed; rolling back. >> "%LOG%"
 if exist "%OLD%" move /Y "%OLD%" "%CURRENT%" >nul
 del "%NEW%" >nul 2>nul
 start "Slider" /D "{current_exe.parent}" "%CURRENT%"
-del "%~f0" >nul 2>nul
+call :schedule_cleanup
 exit /b 1
+:schedule_cleanup
+> "%CLEANUP%" echo @echo off
+>> "%CLEANUP%" echo timeout /t 2 /nobreak ^>nul
+>> "%CLEANUP%" echo del "%HELPER%" ^>nul 2^>nul
+>> "%CLEANUP%" echo del "%%~f0" ^>nul 2^>nul
+start "" /min "%COMSPEC%" /d /c call "%CLEANUP%"
+exit /b 0
 """
     helper.write_text(script, encoding="utf-8")
     return helper
@@ -540,8 +550,7 @@ def launch_update_helper(helper: Path, pid: int) -> None:
         os.environ.get("COMSPEC", "cmd.exe"),
         "/d",
         "/c",
-        "start",
-        "Slider updater",
+        "call",
         str(helper),
         str(pid),
     ]
