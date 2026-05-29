@@ -248,6 +248,11 @@ def format_runtime_slider_defaults(config: dict[str, Any]) -> str:
     add_bool_assignment(assignments, "SLIDER_PDF_RENDER_CACHE", first_config_value(config, "pdf_render_cache", "render_cache"))
     add_number_assignment(
         assignments,
+        "SLIDER_PDF_INITIAL_RENDER_SCALE",
+        first_config_value(config, "pdf_initial_render_scale", "pdf_initial_scale"),
+    )
+    add_number_assignment(
+        assignments,
         "SLIDER_PDF_MAX_ZOOM_RENDER_SCALE",
         first_config_value(config, "pdf_max_zoom_render_scale", "pdf_zoom_render_scale"),
     )

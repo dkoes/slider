@@ -25,6 +25,7 @@
   "pdf_cache_size": 200,
   "pdf_document_cache": true,
   "pdf_render_cache": false,
+  "pdf_initial_render_scale": 2,
   "pdf_max_zoom_render_scale": 5,
   "debug": false
 }
