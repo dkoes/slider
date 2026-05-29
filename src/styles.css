@@ -583,7 +583,8 @@ body {
 }
 
 .poster-preview img,
-.poster-preview iframe {
+.poster-preview iframe,
+.poster-preview .pdfjs-page {
   display: block;
   width: 100%;
   height: 100%;
@@ -591,6 +592,21 @@ body {
   border: 0;
   object-fit: contain;
   pointer-events: none;
+}
+
+.poster-preview .pdfjs-page {
+  display: grid;
+  place-items: center;
+  color: rgba(247, 248, 251, 0.68);
+  font-size: 13px;
+  line-height: 1.3;
+  text-align: center;
+}
+
+.poster-preview .pdfjs-page canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .poster-option span {

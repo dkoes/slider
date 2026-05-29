@@ -1113,9 +1113,11 @@ function createPosterSelectorButton(item: SlideItem, index: number): HTMLElement
     image.src = item.url;
     image.alt = "";
     preview.append(image);
+  } else if (item.kind === "pdf") {
+    preview.append(createPdfThumbnailContent(item));
   } else {
     const frame = document.createElement("iframe");
-    frame.src = item.kind === "pdf" ? `${item.url}#toolbar=0&navpanes=0&scrollbar=0&view=Fit` : item.url;
+    frame.src = item.url;
     frame.title = item.name;
     preview.append(frame);
   }
@@ -1389,6 +1391,26 @@ function createPdfContent(slide: SlideItem): HTMLElement {
   return container;
 }
 
+function createPdfThumbnailContent(slide: SlideItem): HTMLElement {
+  const container = document.createElement("div");
+  container.className = "pdfjs-page pdfjs-thumbnail";
+  container.setAttribute("role", "img");
+  container.setAttribute("aria-label", slide.name);
+
+  const canvas = document.createElement("canvas");
+  container.append(canvas);
+
+  renderPdfPage(slide, container).catch(() => {
+    if (!container.isConnected) {
+      return;
+    }
+
+    container.textContent = "Unable to preview PDF.";
+  });
+
+  return container;
+}
+
 async function renderPdfPage(
   slide: SlideItem,
   container: HTMLElement,
@@ -1460,6 +1482,7 @@ function applyRenderedPdfPage(
     throw new Error("Canvas rendering is not available.");
   }
 
+  configureCanvasScaling(context);
   context.drawImage(rendered.canvas, 0, 0);
   canvas.replaceWith(nextCanvas);
   if (options.releaseSourceCanvas) {
@@ -1472,6 +1495,11 @@ function applyRenderedPdfPage(
 function releaseCanvas(canvas: HTMLCanvasElement): void {
   canvas.width = 0;
   canvas.height = 0;
+}
+
+function configureCanvasScaling(context: CanvasRenderingContext2D): void {
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
 }
 
 function assertUsablePdfCanvasSize(width: number, height: number): void {
@@ -1588,6 +1616,7 @@ async function renderPdfPageToCanvasOnce(
       throw new Error("Canvas rendering is not available.");
     }
 
+    configureCanvasScaling(context);
     await page.render({ canvasContext: context, viewport: renderViewport }).promise;
     return {
       canvas: renderCanvas,
@@ -1884,7 +1913,7 @@ function getExpectedPdfViewportSize(): { width: number; height: number } {
 async function getPdfViewportSize(container: HTMLElement): Promise<{ width: number; height: number }> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const viewport = container.closest(".slide-viewport") as HTMLElement | null;
-    const rect = viewport?.getBoundingClientRect();
+    const rect = (viewport || container).getBoundingClientRect();
     if (rect && rect.width > 0 && rect.height > 0) {
       return { width: rect.width, height: rect.height };
     }
