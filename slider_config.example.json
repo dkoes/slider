@@ -21,6 +21,7 @@
   },
   "four_up": "auto",
   "pan_posters": true,
+  "poster_slides_controls_always_visible": false,
   "pan_fraction": 0.75,
   "pdf_cache_size": 200,
   "pdf_document_cache": true,

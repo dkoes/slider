@@ -229,7 +229,14 @@ body {
 .interactive .nav-control,
 .interactive .zoom-control,
 .interactive .menu-toggle {
-  opacity: 1;
+  opacity: .7;
+  pointer-events: auto;
+}
+
+.poster-controls-always-visible:not(.interactive) .nav-control,
+.poster-controls-always-visible:not(.interactive) .zoom-control,
+.poster-controls-always-visible:not(.interactive) .menu-toggle {
+  opacity: 0.2;
   pointer-events: auto;
 }
 

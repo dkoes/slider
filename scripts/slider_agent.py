@@ -95,7 +95,7 @@ def main() -> int:
     )
     thread.start()
 
-    server = ThreadingHTTPServer((config.host, config.port), make_handler(config))
+    server = ThreadingHTTPServer((config.host, config.port), make_handler(config, syncer))
     print(f"Slider agent serving http://{config.host}:{config.port}/slider.html")
     print(f"Syncing {config.folder_url}")
     try:
@@ -242,6 +242,11 @@ def format_runtime_slider_defaults(config: dict[str, Any]) -> str:
     add_object_assignment(assignments, "SLIDER_LIVE_STREAMS", config.get("live_streams"))
     add_four_up_assignment(assignments, "SLIDER_FOUR_UP", first_config_value(config, "four_up", "four"))
     add_bool_assignment(assignments, "SLIDER_PAN_POSTERS", config.get("pan_posters"))
+    add_bool_assignment(
+        assignments,
+        "SLIDER_POSTER_SLIDES_CONTROLS_ALWAYS_VISIBLE",
+        config.get("poster_slides_controls_always_visible"),
+    )
     add_fraction_assignment(assignments, "SLIDER_PAN_FRACTION", config.get("pan_fraction"))
     add_number_assignment(assignments, "SLIDER_PDF_CACHE_SIZE", first_config_value(config, "pdf_cache_size", "pdf_cache"), minimum=0)
     add_bool_assignment(assignments, "SLIDER_PDF_DOCUMENT_CACHE", first_config_value(config, "pdf_document_cache", "document_cache"))
@@ -1068,7 +1073,7 @@ def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
         raise
 
 
-def make_handler(config: AgentConfig) -> type[SimpleHTTPRequestHandler]:
+def make_handler(config: AgentConfig, syncer: SharePointSyncer) -> type[SimpleHTTPRequestHandler]:
     class SliderHandler(SimpleHTTPRequestHandler):
         def send_json(self, status: int, payload: dict[str, Any]) -> None:
             body = json.dumps(payload).encode("utf-8")
@@ -1099,6 +1104,20 @@ def make_handler(config: AgentConfig) -> type[SimpleHTTPRequestHandler]:
                     self.send_json(200, check_for_update(config))
                 except Exception as error:  # noqa: BLE001 - report update failure to the menu action.
                     self.send_json(500, {"status": "error", "message": str(error), "version": APP_VERSION})
+                return
+
+            if clean_path == "sync/now":
+                try:
+                    syncer.sync_once()
+                    manifest = read_json(config.manifest_path)
+                    sync = manifest.get("sync") if isinstance(manifest.get("sync"), dict) else {}
+                    if sync.get("status") == "ok":
+                        self.send_json(200, {"status": "ok", "message": "Manual sync complete."})
+                    else:
+                        message = str(sync.get("error") or "Manual sync did not complete.")
+                        self.send_json(500, {"status": "error", "message": message})
+                except Exception as error:  # noqa: BLE001 - surface unexpected manual sync failures.
+                    self.send_json(500, {"status": "error", "message": str(error)})
                 return
 
             self.send_error(404, "Not found")

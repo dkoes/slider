@@ -14,6 +14,7 @@ interface SliderGlobals {
   SLIDER_LIVE_STREAMS?: Record<string, string>;
   SLIDER_FOUR_UP?: boolean | "auto";
   SLIDER_PAN_POSTERS?: boolean;
+  SLIDER_POSTER_SLIDES_CONTROLS_ALWAYS_VISIBLE?: boolean;
   SLIDER_PAN_FRACTION?: number;
   SLIDER_PDF_CACHE_SIZE?: number;
   SLIDER_PDF_DOCUMENT_CACHE?: boolean;
@@ -93,6 +94,7 @@ interface SliderConfig {
   liveStreams: LiveStreamConfig[];
   fourUp: boolean;
   panPosters: boolean;
+  posterSlidesControlsAlwaysVisible: boolean;
   panFraction: number;
   pdfCacheSize: number;
   pdfDocumentCache: boolean;
@@ -143,12 +145,15 @@ const statusNode = mustGetElement("status");
 const banner = mustGetElement("banner");
 const menuToggle = mustGetElement("menu-toggle") as HTMLButtonElement;
 const menuPanel = mustGetElement("menu-panel");
+const devMenuPanel = mustGetElement("dev-menu-panel");
 const announcementsButton = mustGetElement("menu-announcements") as HTMLButtonElement;
 const postersButton = mustGetElement("menu-posters") as HTMLButtonElement;
 const liveStreamMenu = mustGetElement("live-stream-menu");
 const fullscreenDivider = mustGetElement("fullscreen-divider");
 const fullscreenButton = mustGetElement("menu-fullscreen") as HTMLButtonElement;
 const updateButton = mustGetElement("menu-update") as HTMLButtonElement;
+const manualSyncButton = mustGetElement("menu-manual-sync") as HTMLButtonElement;
+const clearCachesButton = mustGetElement("menu-clear-caches") as HTMLButtonElement;
 const labsMenu = mustGetElement("labs-menu");
 const previousButton = mustGetElement("previous-slide") as HTMLButtonElement;
 const nextButton = mustGetElement("next-slide") as HTMLButtonElement;
@@ -159,6 +164,7 @@ const liveStreamTime = mustGetElement("live-stream-time");
 const liveStreamReset = mustGetElement("live-stream-reset") as HTMLButtonElement;
 const maxPdfCanvasDimension = 16384;
 const maxPdfCanvasPixels = 128 * 1024 * 1024;
+const devMenuLongPressMs = 5000;
 
 class PdfCanvasTooLargeError extends Error {
   constructor(width: number, height: number) {
@@ -207,6 +213,8 @@ let liveStreamEndsAt = 0;
 let liveStreamTimer = 0;
 let sizingRefreshToken = 0;
 let bannerKind: BannerKind | null = null;
+let devMenuLongPressTimer = 0;
+let devMenuLongPressTriggered = false;
 
 const defaultLiveStreams: Record<string, string> = {
   Cats: "https://www.youtube.com/watch?v=e9C9K8ltDfk",
@@ -267,13 +275,38 @@ async function start(): Promise<void> {
 }
 
 function wireControls(): void {
+  menuToggle.addEventListener("pointerdown", (event) => {
+    pauseForInteraction();
+    devMenuLongPressTriggered = false;
+    window.clearTimeout(devMenuLongPressTimer);
+    devMenuLongPressTimer = window.setTimeout(() => {
+      devMenuLongPressTriggered = true;
+      setDevMenuOpen(true);
+    }, devMenuLongPressMs);
+    event.stopPropagation();
+  });
+  const cancelDevMenuLongPress = () => {
+    window.clearTimeout(devMenuLongPressTimer);
+  };
+  menuToggle.addEventListener("pointerup", cancelDevMenuLongPress);
+  menuToggle.addEventListener("pointercancel", cancelDevMenuLongPress);
+  menuToggle.addEventListener("pointerleave", cancelDevMenuLongPress);
+  menuToggle.addEventListener("contextmenu", (event) => event.preventDefault());
   menuToggle.addEventListener("click", (event) => {
     pauseForInteraction();
+    if (devMenuLongPressTriggered) {
+      devMenuLongPressTriggered = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     setMenuOpen(!menuPanel.classList.contains("open"));
     event.stopPropagation();
   });
   menuPanel.addEventListener("pointerdown", (event) => event.stopPropagation());
   menuPanel.addEventListener("click", (event) => event.stopPropagation());
+  devMenuPanel.addEventListener("pointerdown", (event) => event.stopPropagation());
+  devMenuPanel.addEventListener("click", (event) => event.stopPropagation());
   announcementsButton.addEventListener("click", () => showAnnouncements());
   postersButton.addEventListener("click", () => showPosters());
   fullscreenButton.addEventListener("click", () => {
@@ -281,6 +314,12 @@ function wireControls(): void {
   });
   updateButton.addEventListener("click", () => {
     void checkForUpdates();
+  });
+  manualSyncButton.addEventListener("click", () => {
+    void runManualSync();
+  });
+  clearCachesButton.addEventListener("click", () => {
+    void clearCaches();
   });
   banner.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -321,6 +360,9 @@ function wireControls(): void {
     if (menuPanel.classList.contains("open")) {
       setMenuOpen(false);
     }
+    if (devMenuPanel.classList.contains("open")) {
+      setDevMenuOpen(false);
+    }
   });
   updateFullscreenMenu();
 }
@@ -339,6 +381,7 @@ function renderLiveStreamMenu(): void {
 
 async function checkForUpdates(): Promise<void> {
   setMenuOpen(false);
+  setDevMenuOpen(false);
   updateButton.disabled = true;
   showBanner("Checking for updates...");
   try {
@@ -355,11 +398,70 @@ async function checkForUpdates(): Promise<void> {
   }
 }
 
+async function runManualSync(): Promise<void> {
+  setDevMenuOpen(false);
+  manualSyncButton.disabled = true;
+  showBanner("Syncing slides...");
+  try {
+    const response = await fetch("/sync/now", { method: "POST", cache: "no-store" });
+    const payload = await response.json() as { message?: string; status?: string };
+    if (!response.ok) {
+      throw new Error(payload.message || `Manual sync failed (${response.status}).`);
+    }
+
+    await refreshSlides(config);
+    cycleNeedsRefresh = true;
+    showBanner(payload.message || "Manual sync complete.");
+  } catch (error: unknown) {
+    showBanner(`Manual sync failed: ${getErrorMessage(error)}`);
+  } finally {
+    manualSyncButton.disabled = false;
+  }
+}
+
+async function clearCaches(): Promise<void> {
+  setDevMenuOpen(false);
+  clearCachesButton.disabled = true;
+  showBanner("Clearing caches...");
+  try {
+    cancelScheduledPdfPrefetch();
+    clearPdfRenderCache();
+    clearPdfDocumentCache();
+    transformByTarget = new WeakMap<HTMLElement, ViewTransform>();
+    await clearBrowserCacheStorage();
+    showBanner("Caches cleared.");
+  } catch (error: unknown) {
+    showBanner(`Unable to clear caches: ${getErrorMessage(error)}`);
+  } finally {
+    clearCachesButton.disabled = false;
+  }
+}
+
+async function clearBrowserCacheStorage(): Promise<void> {
+  if (!("caches" in window)) {
+    return;
+  }
+
+  const names = await caches.keys();
+  await Promise.all(names.map((name) => caches.delete(name)));
+}
+
 function setMenuOpen(open: boolean): void {
   menuPanel.classList.toggle("open", open);
   document.body.classList.toggle("menu-open", open);
   if (open) {
+    setDevMenuOpen(false);
+  }
+  if (open) {
     updateFullscreenMenu();
+  }
+}
+
+function setDevMenuOpen(open: boolean): void {
+  devMenuPanel.classList.toggle("open", open);
+  document.body.classList.toggle("dev-menu-open", open);
+  if (open) {
+    setMenuOpen(false);
   }
 }
 
@@ -425,6 +527,10 @@ function getConfig(): SliderConfig {
     : Number(globals.SLIDER_PDF_MAX_ZOOM_RENDER_SCALE);
   const fourUp = resolveFourUp(firstDefined(params.get("four_up"), globals.SLIDER_FOUR_UP, false));
   const panPosters = parseBooleanParam(params.get("pan_posters"), globals.SLIDER_PAN_POSTERS ?? true);
+  const posterSlidesControlsAlwaysVisible = parseBooleanParam(
+    params.get("poster_slides_controls_always_visible"),
+    globals.SLIDER_POSTER_SLIDES_CONTROLS_ALWAYS_VISIBLE ?? false
+  );
   const rawPanFraction = params.get("pan_fraction");
   const parsedPanFraction = rawPanFraction ? Number(rawPanFraction) : Number(globals.SLIDER_PAN_FRACTION);
 
@@ -440,6 +546,7 @@ function getConfig(): SliderConfig {
     liveStreams,
     fourUp,
     panPosters,
+    posterSlidesControlsAlwaysVisible,
     panFraction: Number.isFinite(parsedPanFraction) && parsedPanFraction > 0 && parsedPanFraction <= 1 ? parsedPanFraction : 0.85,
     pdfCacheSize: Number.isFinite(parsedPdfCacheSize) && parsedPdfCacheSize >= 0 ? Math.floor(parsedPdfCacheSize) : 200,
     pdfDocumentCache,
@@ -1582,7 +1689,7 @@ function getPdfCacheKey(slide: SlideItem, viewportSize: { width: number; height:
 
 function trimPdfRenderCache(): void {
   if (!config.pdfRenderCache || config.pdfCacheSize <= 0) {
-    pdfRenderCache.clear();
+    clearPdfRenderCache();
     return;
   }
 
@@ -1591,8 +1698,19 @@ function trimPdfRenderCache(): void {
     if (!oldestKey) {
       return;
     }
-    pdfRenderCache.delete(oldestKey);
+    const cached = pdfRenderCache.get(oldestKey);
+    if (cached) {
+      void cached.promise.then((rendered) => releaseCanvas(rendered.canvas)).catch(() => undefined);
+      pdfRenderCache.delete(oldestKey);
+    }
   }
+}
+
+function clearPdfRenderCache(): void {
+  pdfRenderCache.forEach((cached) => {
+    void cached.promise.then((rendered) => releaseCanvas(rendered.canvas)).catch(() => undefined);
+  });
+  pdfRenderCache.clear();
 }
 
 function trimPdfDocumentCache(): void {
@@ -1951,6 +2069,10 @@ function setAppMode(mode: AppMode): void {
   document.body.classList.toggle("lab-mode", mode === "lab");
   document.body.classList.toggle("live-stream-mode", mode === "live-stream");
   document.body.classList.toggle("four-mode", config.fourUp && mode === "announcements");
+  document.body.classList.toggle(
+    "poster-controls-always-visible",
+    config.posterSlidesControlsAlwaysVisible && isPosterDisplayMode()
+  );
 }
 
 function exitInteractiveMode(): void {
