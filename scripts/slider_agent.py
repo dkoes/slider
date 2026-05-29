@@ -503,12 +503,21 @@ set "NEW={new_exe}"
 set "OLD={old_exe}"
 set "LOG={log_path}"
 echo [%date% %time%] Waiting for slider PID %PID% to exit. > "%LOG%"
+set /a WAIT_SECONDS=0
 :wait
 tasklist /FI "PID eq %PID%" | find "%PID%" >nul
 if not errorlevel 1 (
+  if %WAIT_SECONDS% GEQ 20 goto force_exit
   timeout /t 1 /nobreak >nul
+  set /a WAIT_SECONDS+=1
   goto wait
 )
+goto replace
+:force_exit
+echo [%date% %time%] Slider PID %PID% did not exit; terminating it. >> "%LOG%"
+taskkill /F /T /PID %PID% >> "%LOG%" 2>>&1
+timeout /t 1 /nobreak >nul
+:replace
 echo [%date% %time%] Closing Chrome before replacement. >> "%LOG%"
 taskkill /F /T /IM chrome.exe >> "%LOG%" 2>>&1
 echo [%date% %time%] Replacing executable. >> "%LOG%"
