@@ -12,7 +12,7 @@
   "time_per_slide_seconds": 30,
   "poster_time_seconds": 60,
   "interactive_pause_seconds": 120,
-  "live_stream_minutes": 30,
+  "live_stream_minutes": 20,
   "live_streams": {
     "Cats": "https://www.youtube.com/watch?v=e9C9K8ltDfk",
     "Puppies": "https://www.youtube.com/watch?v=h-Z0wCdD3dI",
