@@ -209,6 +209,13 @@ class PdfCanvasTooLargeError extends Error {
   }
 }
 
+class PdfBlankRenderError extends Error {
+  constructor(width: number, height: number) {
+    super(`PDF render appears blank or all black (${width}x${height}).`);
+    this.name = "PdfBlankRenderError";
+  }
+}
+
 let slides: SlideItem[] = [];
 let labs: LabFolder[] = [];
 let slideIndex = -1;
@@ -1629,6 +1636,44 @@ function assertUsablePdfCanvasSize(width: number, height: number): void {
   }
 }
 
+function assertPdfCanvasHasVisibleContent(canvas: HTMLCanvasElement): void {
+  assertUsablePdfCanvasSize(canvas.width, canvas.height);
+
+  const sampleCanvas = document.createElement("canvas");
+  const sampleWidth = Math.min(24, canvas.width);
+  const sampleHeight = Math.min(24, canvas.height);
+  sampleCanvas.width = sampleWidth;
+  sampleCanvas.height = sampleHeight;
+
+  const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
+  if (!sampleContext) {
+    return;
+  }
+
+  configureCanvasScaling(sampleContext);
+  sampleContext.drawImage(canvas, 0, 0, sampleWidth, sampleHeight);
+
+  let data: Uint8ClampedArray;
+  try {
+    data = sampleContext.getImageData(0, 0, sampleWidth, sampleHeight).data;
+  } catch (error: unknown) {
+    logCaughtException("PDF render content validation failed", error);
+    return;
+  } finally {
+    releaseCanvas(sampleCanvas);
+  }
+
+  for (let index = 0; index < data.length; index += 4) {
+    const alpha = data[index + 3];
+    const brightness = data[index] + data[index + 1] + data[index + 2];
+    if (alpha > 8 && brightness > 24) {
+      return;
+    }
+  }
+
+  throw new PdfBlankRenderError(canvas.width, canvas.height);
+}
+
 async function getRenderedPdfPage(
   slide: SlideItem,
   viewportSize: { width: number; height: number },
@@ -1742,6 +1787,7 @@ async function snapshotPdfRender(rendered: PdfRenderResult): Promise<PdfRenderSn
   };
 
   try {
+    assertPdfCanvasHasVisibleContent(rendered.canvas);
     const bitmap = await createImageBitmap(rendered.canvas);
     releaseCanvas(rendered.canvas);
     return { ...snapshot, bitmap };
@@ -1764,6 +1810,7 @@ function materializePdfRenderSnapshot(snapshot: PdfRenderSnapshot): PdfRenderRes
 
   configureCanvasScaling(context);
   context.drawImage(snapshot.bitmap, 0, 0);
+  assertPdfCanvasHasVisibleContent(canvas);
   return {
     canvas,
     fitWidth: snapshot.fitWidth,
@@ -1839,6 +1886,7 @@ async function renderPdfPageToCanvasOnce(
 
     configureCanvasScaling(context);
     await page.render({ canvasContext: context, viewport: renderViewport }).promise;
+    assertPdfCanvasHasVisibleContent(renderCanvas);
     return {
       canvas: renderCanvas,
       fitWidth,
