@@ -381,6 +381,7 @@ def close_windows_chrome() -> None:
     if sys.platform != "win32":
         return
 
+    print("Closing Chrome processes.", flush=True)
     subprocess.run(
         ["taskkill", "/F", "/T", "/IM", "chrome.exe"],
         stdout=subprocess.DEVNULL,
@@ -391,7 +392,17 @@ def close_windows_chrome() -> None:
 
 def quit_agent() -> None:
     close_windows_chrome()
+    print("Slider agent exiting.", flush=True)
     os._exit(0)
+
+
+def exit_agent_after_delay(delay_seconds: float, reason: str) -> None:
+    def exit_agent() -> None:
+        time.sleep(delay_seconds)
+        print(reason, flush=True)
+        os._exit(0)
+
+    threading.Thread(target=exit_agent, daemon=True).start()
 
 
 def find_windows_chrome_path(configured_path: str) -> str:
@@ -451,19 +462,24 @@ def check_for_update(config: AgentConfig) -> dict[str, Any]:
             "latestVersion": latest_version,
         }
 
+    print(f"Update {latest_version} is available; downloading from {download_url}", flush=True)
     new_exe = Path(sys.executable).with_suffix(Path(sys.executable).suffix + ".new")
     download_update(download_url, new_exe)
+    print(f"Downloaded update to {new_exe}", flush=True)
     actual_sha256 = sha256_file(new_exe)
     if actual_sha256.lower() != expected_sha256:
         with contextlib.suppress(OSError):
             new_exe.unlink()
         raise RuntimeError("Downloaded update did not match the expected SHA-256.")
 
+    print("Update SHA-256 verified.", flush=True)
     remove_mark_of_the_web(new_exe)
     helper = write_update_helper(Path(sys.executable), new_exe)
+    print(f"Update helper written to {helper}", flush=True)
     close_windows_chrome()
     launch_update_helper(helper, os.getpid())
-    threading.Timer(1.0, lambda: os._exit(0)).start()
+    print("Update helper launched; this agent will exit so the executable can be replaced.", flush=True)
+    exit_agent_after_delay(1.0, "Slider agent exiting for update.")
     return {
         "status": "updating",
         "message": f"Installing slider {latest_version}; the app will restart.",
@@ -579,7 +595,8 @@ def launch_update_helper(helper: Path, pid: int) -> None:
         creationflags |= subprocess.CREATE_NEW_PROCESS_GROUP
     if hasattr(subprocess, "DETACHED_PROCESS"):
         creationflags |= subprocess.DETACHED_PROCESS
-    subprocess.Popen(command, cwd=str(helper.parent), close_fds=True, creationflags=creationflags)
+    process = subprocess.Popen(command, cwd=str(helper.parent), close_fds=True, creationflags=creationflags)
+    print(f"Update helper process started with PID {process.pid}.", flush=True)
 
 
 def compare_versions(left: str, right: str) -> int:
