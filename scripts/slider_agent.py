@@ -468,7 +468,6 @@ def check_for_update(config: AgentConfig) -> dict[str, Any]:
     remove_mark_of_the_web(new_exe)
     helper = write_update_helper(Path(sys.executable), new_exe)
     print(f"Update helper written to {helper}", flush=True)
-    close_windows_chrome()
     launch_update_helper(helper, os.getpid())
     print("Update helper launched; this agent will exit so the executable can be replaced.", flush=True)
     exit_agent_after_delay(1.0, "Slider agent exiting for update.")
@@ -575,9 +574,10 @@ exit /b 1
 
 
 def launch_update_helper(helper: Path, pid: int) -> None:
-    command_line = f'call "{helper}" {pid}'
+    comspec = os.environ.get("COMSPEC", "cmd.exe")
+    command_line = f'start "" /min /D "{helper.parent}" "{comspec}" /d /c call "{helper}" {pid}'
     command = [
-        os.environ.get("COMSPEC", "cmd.exe"),
+        comspec,
         "/d",
         "/c",
         command_line,
@@ -585,10 +585,10 @@ def launch_update_helper(helper: Path, pid: int) -> None:
     creationflags = 0
     if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
         creationflags |= subprocess.CREATE_NEW_PROCESS_GROUP
-    if hasattr(subprocess, "DETACHED_PROCESS"):
-        creationflags |= subprocess.DETACHED_PROCESS
+    if hasattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB"):
+        creationflags |= subprocess.CREATE_BREAKAWAY_FROM_JOB
     process = subprocess.Popen(command, cwd=str(helper.parent), close_fds=True, creationflags=creationflags)
-    print(f"Update helper process started with PID {process.pid}.", flush=True)
+    print(f"Update helper launcher started with PID {process.pid}.", flush=True)
 
 
 def sync_loop(syncer: "SharePointSyncer", interval_seconds: int, after_first_sync: Any = None) -> None:
