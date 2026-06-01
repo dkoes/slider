@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import contextlib
 import hashlib
 import http.cookiejar
 import json
@@ -19,6 +18,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,6 +27,23 @@ from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from typing import Any
+
+
+class TeeTextWriter:
+    def __init__(self, *writers: Any) -> None:
+        self.writers = [writer for writer in writers if writer is not None]
+        self.lock = threading.Lock()
+
+    def write(self, text: str) -> int:
+        with self.lock:
+            for writer in self.writers:
+                writer.write(text)
+            return len(text)
+
+    def flush(self) -> None:
+        with self.lock:
+            for writer in self.writers:
+                writer.flush()
 
 
 SUPPORTED_EXTENSIONS = {
@@ -79,6 +96,7 @@ class AgentConfig:
 
 def main() -> int:
     config = parse_args()
+    setup_logging(config)
     print(f"Slider agent version {APP_VERSION}")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     config.slides_dir.mkdir(parents=True, exist_ok=True)
@@ -106,6 +124,19 @@ def main() -> int:
     finally:
         server.server_close()
     return 0
+
+
+def setup_logging(config: AgentConfig) -> None:
+    log_path = config.config_path.parent / "slider.log"
+    log_file = log_path.open("a", encoding="utf-8", buffering=1)
+    sys.stdout = TeeTextWriter(sys.stdout, log_file)  # type: ignore[assignment]
+    sys.stderr = TeeTextWriter(sys.stderr, log_file)  # type: ignore[assignment]
+    print(f"[{utc_now()}] Logging to {log_path}", flush=True)
+
+
+def log_exception(context: str, error: BaseException) -> None:
+    print(f"[{utc_now()}] {context}: {error}", file=sys.stderr, flush=True)
+    traceback.print_exception(type(error), error, error.__traceback__, file=sys.stderr)
 
 
 def parse_args() -> AgentConfig:
@@ -341,7 +372,8 @@ def parse_number(value: Any) -> float | int | None:
 
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as error:
+        log_exception(f"Unable to parse numeric config value {value!r}", error)
         return None
 
     if not number == number or number in (float("inf"), float("-inf")):
@@ -374,6 +406,7 @@ def launch_windows_chrome_kiosk(config: AgentConfig) -> None:
         )
         print(f"Launched Chrome kiosk at {url}")
     except OSError as error:
+        log_exception("Chrome kiosk launch failed", error)
         print(f"Chrome kiosk launch failed: {error}", file=sys.stderr)
 
 
@@ -460,8 +493,10 @@ def check_for_update(config: AgentConfig) -> dict[str, Any]:
     print(f"Downloaded update to {new_exe}", flush=True)
     actual_sha256 = sha256_file(new_exe)
     if actual_sha256.lower() != expected_sha256:
-        with contextlib.suppress(OSError):
+        try:
             new_exe.unlink()
+        except OSError as error:
+            log_exception(f"Unable to remove invalid update download {new_exe}", error)
         raise RuntimeError("Downloaded update did not match the expected SHA-256.")
 
     print("Update SHA-256 verified.", flush=True)
@@ -498,9 +533,12 @@ def download_update(url: str, target: Path) -> None:
         with urllib.request.urlopen(request, timeout=300) as response, temp_path.open("wb") as output:
             shutil.copyfileobj(response, output)
         temp_path.replace(target)
-    except Exception:
-        with contextlib.suppress(OSError):
+    except Exception as error:
+        log_exception(f"Update download failed for {url}", error)
+        try:
             temp_path.unlink()
+        except OSError as cleanup_error:
+            log_exception(f"Unable to remove partial update download {temp_path}", cleanup_error)
         raise
 
 
@@ -513,8 +551,10 @@ def sha256_file(path: Path) -> str:
 
 
 def remove_mark_of_the_web(path: Path) -> None:
-    with contextlib.suppress(OSError):
+    try:
         os.remove(str(path) + ":Zone.Identifier")
+    except OSError as error:
+        log_exception(f"Unable to remove mark-of-the-web from {path}", error)
 
 
 def write_update_helper(current_exe: Path, new_exe: Path) -> Path:
@@ -654,6 +694,7 @@ class SharePointSyncer:
                 write_json_atomic(self.config.manifest_path, manifest)
                 print(f"{attempt} synced {len(slides)} announcement slides and {count_lab_items(labs)} lab files.")
             except Exception as error:  # noqa: BLE001 - keep the display alive on every sync failure.
+                log_exception("Slide sync failed", error)
                 self.write_failure_manifest(attempt, str(error))
                 print(f"{attempt} sync failed: {error}", file=sys.stderr)
 
@@ -819,8 +860,10 @@ class SharePointSyncer:
                 continue
             for path in root.rglob("*"):
                 if path.is_file() and path not in wanted:
-                    with contextlib.suppress(OSError):
+                    try:
                         path.unlink()
+                    except OSError as error:
+                        log_exception(f"Unable to remove unlisted file {path}", error)
 
     def local_path_from_url(self, url: str) -> Path:
         return self.config.data_dir / urllib.parse.unquote(url.lstrip("/"))
@@ -853,6 +896,7 @@ class SharePointSyncer:
                 reject_auth_redirect(final_url)
                 return TextResponse(final_url, body.decode(charset, errors="replace"))
         except urllib.error.HTTPError as error:
+            log_exception(f"HTTP text fetch failed for {url}", error)
             raise_auth_error(error)
             raise
 
@@ -868,6 +912,7 @@ class SharePointSyncer:
                     raise RuntimeError("JSON response was not an object.")
                 return payload
         except urllib.error.HTTPError as error:
+            log_exception(f"HTTP JSON fetch failed for {url}", error)
             raise_auth_error(error)
             raise
 
@@ -1087,9 +1132,12 @@ def download_atomic(opener: urllib.request.OpenerDirector, url: str, target: Pat
         with opener.open(request, timeout=120) as response, temp_path.open("wb") as output:
             shutil.copyfileobj(response, output)
         temp_path.replace(target)
-    except Exception:
-        with contextlib.suppress(OSError):
+    except Exception as error:
+        log_exception(f"Download failed for {target}", error)
+        try:
             temp_path.unlink()
+        except OSError as cleanup_error:
+            log_exception(f"Unable to remove partial download {temp_path}", cleanup_error)
         raise
 
 
@@ -1098,7 +1146,10 @@ def read_json(path: Path) -> dict[str, Any]:
         with path.open("r", encoding="utf-8") as handle:
             payload = json.load(handle)
             return payload if isinstance(payload, dict) else {}
-    except (OSError, json.JSONDecodeError):
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as error:
+        log_exception(f"Unable to read JSON from {path}", error)
         return {}
 
 
@@ -1112,9 +1163,12 @@ def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
             json.dump(payload, handle, indent=2)
             handle.write("\n")
         temp_path.replace(path)
-    except Exception:
-        with contextlib.suppress(OSError):
+    except Exception as error:
+        log_exception(f"Unable to write JSON atomically to {path}", error)
+        try:
             temp_path.unlink()
+        except OSError as cleanup_error:
+            log_exception(f"Unable to remove partial JSON file {temp_path}", cleanup_error)
         raise
 
 
@@ -1127,6 +1181,14 @@ def make_handler(config: AgentConfig, syncer: SharePointSyncer) -> type[SimpleHT
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def read_json_body(self, max_bytes: int = 8192) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length") or "0")
+            if length <= 0 or length > max_bytes:
+                return {}
+
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            return payload if isinstance(payload, dict) else {}
 
         def do_GET(self) -> None:
             parsed_path = urllib.parse.urlparse(self.path).path
@@ -1148,6 +1210,7 @@ def make_handler(config: AgentConfig, syncer: SharePointSyncer) -> type[SimpleHT
                 try:
                     self.send_json(200, check_for_update(config))
                 except Exception as error:  # noqa: BLE001 - report update failure to the menu action.
+                    log_exception("Update request failed", error)
                     self.send_json(500, {"status": "error", "message": str(error), "version": APP_VERSION})
                 return
 
@@ -1162,12 +1225,25 @@ def make_handler(config: AgentConfig, syncer: SharePointSyncer) -> type[SimpleHT
                         message = str(sync.get("error") or "Manual sync did not complete.")
                         self.send_json(500, {"status": "error", "message": message})
                 except Exception as error:  # noqa: BLE001 - surface unexpected manual sync failures.
+                    log_exception("Manual sync request failed", error)
                     self.send_json(500, {"status": "error", "message": str(error)})
                 return
 
             if clean_path == "quit":
                 self.send_json(200, {"status": "ok", "message": "Slider is quitting."})
                 threading.Timer(0.5, quit_agent).start()
+                return
+
+            if clean_path == "log":
+                try:
+                    payload = self.read_json_body()
+                    message = str(payload.get("message") or "").strip()
+                    if message:
+                        print(message, flush=True)
+                    self.send_json(200, {"status": "ok"})
+                except Exception as error:  # noqa: BLE001 - logging must not disturb the app.
+                    log_exception("Browser log request failed", error)
+                    self.send_json(400, {"status": "error", "message": str(error)})
                 return
 
             self.send_error(404, "Not found")

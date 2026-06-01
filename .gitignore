@@ -9,3 +9,7 @@ release/
 *.pyc
 *.pyo
 *.spec
+slider.log
+slider.update.log
+slider.update.cmd
+slider.launch.cmd

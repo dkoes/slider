@@ -114,9 +114,20 @@ interface PdfRenderResult {
   outputScale: number;
 }
 
+interface PdfRenderSnapshot {
+  bitmap: ImageBitmap;
+  canvasWidth: number;
+  canvasHeight: number;
+  fitWidth: number;
+  fitHeight: number;
+  renderWidth: number;
+  renderHeight: number;
+  outputScale: number;
+}
+
 interface PdfRenderCacheEntry {
   key: string;
-  promise: Promise<PdfRenderResult>;
+  promise: Promise<PdfRenderSnapshot>;
 }
 
 interface PdfRenderOptions {
@@ -227,6 +238,7 @@ const defaultLiveStreams: Record<string, string> = {
 };
 
 start().catch((error: unknown) => {
+  logCaughtException("slider startup failed", error);
   showBanner(`Slider failed to start: ${getErrorMessage(error)}`);
 });
 
@@ -405,6 +417,7 @@ async function checkForUpdates(): Promise<void> {
     }
     showBanner(payload.message || "Update started.");
   } catch (error: unknown) {
+    logCaughtException("update action failed", error);
     showBanner(`Update failed: ${getErrorMessage(error)}`);
   } finally {
     updateButton.disabled = false;
@@ -426,6 +439,7 @@ async function runManualSync(): Promise<void> {
     cycleNeedsRefresh = true;
     showBanner(payload.message || "Manual sync complete.");
   } catch (error: unknown) {
+    logCaughtException("manual sync failed", error);
     showBanner(`Manual sync failed: ${getErrorMessage(error)}`);
   } finally {
     manualSyncButton.disabled = false;
@@ -444,6 +458,7 @@ async function clearCaches(): Promise<void> {
     await clearBrowserCacheStorage();
     showBanner("Caches cleared.");
   } catch (error: unknown) {
+    logCaughtException("clear caches failed", error);
     showBanner(`Unable to clear caches: ${getErrorMessage(error)}`);
   } finally {
     clearCachesButton.disabled = false;
@@ -464,6 +479,7 @@ async function quitSlider(): Promise<void> {
     running = false;
     showBanner(payload.message || "Slider is quitting.");
   } catch (error: unknown) {
+    logCaughtException("quit failed", error);
     quitButton.disabled = false;
     showBanner(`Quit failed: ${getErrorMessage(error)}`);
   }
@@ -507,6 +523,7 @@ async function enterFullscreen(): Promise<void> {
   try {
     await document.documentElement.requestFullscreen();
   } catch (error: unknown) {
+    logCaughtException("enter fullscreen failed", error);
     showBanner(`Unable to enter fullscreen: ${getErrorMessage(error)}`);
     updateFullscreenMenu();
   }
@@ -658,6 +675,7 @@ async function refreshSlides(config: SliderConfig): Promise<void> {
       clearStaticMessage();
     }
   } catch (error: unknown) {
+    logCaughtException("refresh slides failed", error);
     showBanner(`Unable to read local slide manifest: ${getErrorMessage(error)}`);
   }
 }
@@ -829,7 +847,8 @@ function waitForMediaReady(media: HTMLElement): Promise<void> {
       if (media.contentDocument?.readyState === "complete") {
         return Promise.resolve();
       }
-    } catch {
+    } catch (error: unknown) {
+      logCaughtException("iframe readiness check failed", error);
       // Cross-origin frames cannot expose readiness; wait for the frame load event.
     }
 
@@ -861,7 +880,10 @@ function waitForEvent(target: EventTarget, names: string[]): Promise<void> {
 function withTimeout(promise: Promise<void>, timeoutMs: number): Promise<void> {
   return new Promise((resolve) => {
     const timeout = window.setTimeout(resolve, timeoutMs);
-    promise.then(resolve).catch(resolve).finally(() => window.clearTimeout(timeout));
+    promise.then(resolve).catch((error: unknown) => {
+      logCaughtException("media readiness wait failed", error);
+      resolve();
+    }).finally(() => window.clearTimeout(timeout));
   });
 }
 
@@ -1034,7 +1056,8 @@ function getLiveStreamEmbedUrl(url: string): string {
     if (videoId) {
       return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?autoplay=1&mute=1&playsinline=1&rel=0`;
     }
-  } catch {
+  } catch (error: unknown) {
+    logCaughtException("live stream URL parsing failed", error);
     return url;
   }
 
@@ -1375,7 +1398,8 @@ function disableIframeScrolling(frame: HTMLIFrameElement): void {
       if (frameDocument.body) {
         frameDocument.body.style.overflow = "hidden";
       }
-    } catch {
+    } catch (error: unknown) {
+      logCaughtException("iframe scroll disabling failed", error);
       // Cross-origin HTML slides still get the iframe-level scrolling hint above.
     }
   });
@@ -1395,7 +1419,8 @@ function wireHtmlFrameInteractions(viewport: HTMLElement, frame: HTMLIFrameEleme
       }
 
       frameDocument.addEventListener("pointerdown", showParentControls, { capture: true });
-    } catch {
+    } catch (error: unknown) {
+      logCaughtException("iframe interaction wiring failed", error);
       // Cross-origin HTML slides can receive clicks, but the parent cannot observe
       // their document events without cooperation from the embedded page.
     }
@@ -1412,6 +1437,7 @@ function createPdfContent(slide: SlideItem): HTMLElement {
   container.append(canvas);
 
   renderPdfPage(slide, container).catch((error: unknown) => {
+    logCaughtException(`render PDF failed for ${slide.name}`, error);
     if (!container.isConnected) {
       return;
     }
@@ -1432,7 +1458,8 @@ function createPdfThumbnailContent(slide: SlideItem): HTMLElement {
   const canvas = document.createElement("canvas");
   container.append(canvas);
 
-  renderPdfPage(slide, container).catch(() => {
+  renderPdfPage(slide, container).catch((error: unknown) => {
+    logCaughtException(`render PDF thumbnail failed for ${slide.name}`, error);
     if (!container.isConnected) {
       return;
     }
@@ -1457,22 +1484,19 @@ async function renderPdfPage(
     return;
   }
 
-  const shouldUseRenderCache = options.useCache !== false && config.pdfRenderCache;
   const outputScale = options.outputScale || config.pdfInitialRenderScale;
   const rendered = options.useCache === false
     ? await renderPdfPageToCanvasWithScaleFallback(slide, viewportSize, outputScale)
     : await getRenderedPdfPage(slide, viewportSize, outputScale);
 
   if (!container.isConnected) {
-    if (!shouldUseRenderCache) {
-      releaseCanvas(rendered.canvas);
-    }
+    releaseCanvas(rendered.canvas);
     return;
   }
 
   applyRenderedPdfPage(rendered, container, {
     outputScale: rendered.outputScale,
-    releaseSourceCanvas: !shouldUseRenderCache
+    releaseSourceCanvas: true
   });
 }
 
@@ -1558,26 +1582,46 @@ async function getRenderedPdfPage(
   if (cached) {
     pdfRenderCache.delete(key);
     pdfRenderCache.set(key, cached);
-    return cached.promise;
+    try {
+      return await materializePdfRenderSnapshot(await cached.promise);
+    } catch (error: unknown) {
+      logCaughtException("cached PDF render materialization failed", error);
+      pdfRenderCache.delete(key);
+      void cached.promise.then(releasePdfRenderSnapshot).catch((releaseError: unknown) => {
+        logCaughtException("cached PDF render release after materialization failure failed", releaseError);
+      });
+    }
   }
 
   const entry: PdfRenderCacheEntry = {
     key,
     promise: renderPdfPageToCanvasWithScaleFallback(slide, viewportSize, outputScale)
+      .then(snapshotPdfRender)
   };
   pdfRenderCache.set(key, entry);
   trimPdfRenderCache();
-  void entry.promise.then((rendered) => {
+  void entry.promise.then((snapshot) => {
     if (pdfRenderCache.get(key) === entry) {
-      logDebugCacheAddition("pdf-render", key, pdfRenderCache.size, getRenderedPdfPageDebugDetails(rendered));
+      logCacheAddition("pdf-render", key, pdfRenderCache.size, getPdfRenderSnapshotDetails(snapshot));
     }
-  }).catch(() => undefined);
-  entry.promise.catch(() => {
+  }).catch((error: unknown) => logCaughtException("pdf render cache addition logging failed", error));
+  entry.promise.catch((error: unknown) => {
     if (pdfRenderCache.get(key) === entry) {
+      logCaughtException("pdf render cache entry failed", error);
       pdfRenderCache.delete(key);
     }
   });
-  return entry.promise;
+  const snapshot = await entry.promise;
+  try {
+    return materializePdfRenderSnapshot(snapshot);
+  } catch (error: unknown) {
+    logCaughtException("new PDF render cache materialization failed; re-rendering", error);
+    if (pdfRenderCache.get(key) === entry) {
+      pdfRenderCache.delete(key);
+    }
+    releasePdfRenderSnapshot(snapshot);
+    return renderPdfPageToCanvasWithScaleFallback(slide, viewportSize, outputScale);
+  }
 }
 
 async function renderPdfPageToCanvas(
@@ -1588,9 +1632,58 @@ async function renderPdfPageToCanvas(
   try {
     return await renderPdfPageToCanvasOnce(slide, viewportSize, outputScale);
   } catch (error) {
+    logCaughtException(`render PDF retrying after failure for ${slide.name}`, error);
     invalidatePdfDocument(slide);
     return renderPdfPageToCanvasOnce(slide, viewportSize, outputScale);
   }
+}
+
+async function snapshotPdfRender(rendered: PdfRenderResult): Promise<PdfRenderSnapshot> {
+  const snapshot = {
+    canvasWidth: rendered.canvas.width,
+    canvasHeight: rendered.canvas.height,
+    fitWidth: rendered.fitWidth,
+    fitHeight: rendered.fitHeight,
+    renderWidth: rendered.renderWidth,
+    renderHeight: rendered.renderHeight,
+    outputScale: rendered.outputScale
+  };
+
+  try {
+    const bitmap = await createImageBitmap(rendered.canvas);
+    releaseCanvas(rendered.canvas);
+    return { ...snapshot, bitmap };
+  } catch (error: unknown) {
+    releaseCanvas(rendered.canvas);
+    logCaughtException("PDF render bitmap snapshot failed", error);
+    throw error;
+  }
+}
+
+function materializePdfRenderSnapshot(snapshot: PdfRenderSnapshot): PdfRenderResult {
+  assertUsablePdfCanvasSize(snapshot.canvasWidth, snapshot.canvasHeight);
+  const canvas = document.createElement("canvas");
+  canvas.width = snapshot.canvasWidth;
+  canvas.height = snapshot.canvasHeight;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Canvas rendering is not available.");
+  }
+
+  configureCanvasScaling(context);
+  context.drawImage(snapshot.bitmap, 0, 0);
+  return {
+    canvas,
+    fitWidth: snapshot.fitWidth,
+    fitHeight: snapshot.fitHeight,
+    renderWidth: snapshot.renderWidth,
+    renderHeight: snapshot.renderHeight,
+    outputScale: snapshot.outputScale
+  };
+}
+
+function releasePdfRenderSnapshot(snapshot: PdfRenderSnapshot): void {
+  snapshot.bitmap.close();
 }
 
 async function renderPdfPageToCanvasWithScaleFallback(
@@ -1605,6 +1698,7 @@ async function renderPdfPageToCanvasWithScaleFallback(
       throw error;
     }
 
+    logCaughtException(`PDF render scale fallback for ${slide.name}`, error);
     if (config.debug) {
       console.warn(`[slider pdf] initial render scale ${outputScale} is too large for ${slide.name}; falling back to 1x`);
     }
@@ -1687,14 +1781,15 @@ function getPdfDocument(slide: SlideItem): Promise<PdfDocumentProxy> {
   trimPdfDocumentCache();
   void promise.then((documentProxy) => {
     if (pdfDocumentCache.get(key) === promise) {
-      logDebugCacheAddition("pdf-document", key, pdfDocumentCache.size, {
+      logCacheAddition("pdf-document", key, pdfDocumentCache.size, {
         pages: documentProxy.numPages,
         size: "unknown"
       });
     }
-  }).catch(() => undefined);
-  promise.catch(() => {
+  }).catch((error: unknown) => logCaughtException("pdf document cache addition logging failed", error));
+  promise.catch((error: unknown) => {
     if (pdfDocumentCache.get(key) === promise) {
+      logCaughtException("pdf document cache entry failed", error);
       pdfDocumentCache.delete(key);
     }
   });
@@ -1714,7 +1809,7 @@ function invalidatePdfDocument(slide: SlideItem): void {
   const key = getPdfDocumentCacheKey(slide);
   const cached = pdfDocumentCache.get(key);
   if (cached) {
-    void cached.then(cleanupPdfDocument).catch(() => undefined);
+    void cached.then(cleanupPdfDocument).catch((error: unknown) => logCaughtException("pdf document invalidation cleanup failed", error));
     pdfDocumentCache.delete(key);
   }
   if (config.debug) {
@@ -1726,6 +1821,7 @@ async function cleanupPdfDocument(documentProxy: PdfDocumentProxy): Promise<void
   try {
     await documentProxy.cleanup();
   } catch (error) {
+    logCaughtException("pdf document cleanup failed", error);
     if (config.debug) {
       console.warn("[slider cache] pdf-document cleanup failed", error);
     }
@@ -1750,6 +1846,9 @@ function getPdfCacheKey(slide: SlideItem, viewportSize: { width: number; height:
 
 function trimPdfRenderCache(): void {
   if (!config.pdfRenderCache || config.pdfCacheSize <= 0) {
+    if (pdfRenderCache.size > 0) {
+      logCacheEvent("clearing pdf-render cache", { entries: pdfRenderCache.size, reason: "disabled-or-zero-size" });
+    }
     clearPdfRenderCache();
     return;
   }
@@ -1761,21 +1860,33 @@ function trimPdfRenderCache(): void {
     }
     const cached = pdfRenderCache.get(oldestKey);
     if (cached) {
-      void cached.promise.then((rendered) => releaseCanvas(rendered.canvas)).catch(() => undefined);
+      void cached.promise
+        .then(releasePdfRenderSnapshot)
+        .catch((error: unknown) => logCaughtException("pdf render snapshot eviction cleanup failed", error));
       pdfRenderCache.delete(oldestKey);
+      logCacheEvent("evicted pdf-render", { key: oldestKey, entries: pdfRenderCache.size, limit: config.pdfCacheSize });
     }
   }
 }
 
 function clearPdfRenderCache(): void {
+  const entries = pdfRenderCache.size;
   pdfRenderCache.forEach((cached) => {
-    void cached.promise.then((rendered) => releaseCanvas(rendered.canvas)).catch(() => undefined);
+    void cached.promise
+      .then(releasePdfRenderSnapshot)
+      .catch((error: unknown) => logCaughtException("pdf render snapshot cache clear cleanup failed", error));
   });
   pdfRenderCache.clear();
+  if (entries > 0) {
+    logCacheEvent("cleared pdf-render cache", { entries });
+  }
 }
 
 function trimPdfDocumentCache(): void {
   if (!config.pdfDocumentCache || config.pdfCacheSize <= 0) {
+    if (pdfDocumentCache.size > 0) {
+      logCacheEvent("clearing pdf-document cache", { entries: pdfDocumentCache.size, reason: "disabled-or-zero-size" });
+    }
     clearPdfDocumentCache();
     return;
   }
@@ -1787,44 +1898,92 @@ function trimPdfDocumentCache(): void {
     }
     const cached = pdfDocumentCache.get(oldestKey);
     if (cached) {
-      void cached.then(cleanupPdfDocument).catch(() => undefined);
+      void cached
+        .then(cleanupPdfDocument)
+        .catch((error: unknown) => logCaughtException("pdf document eviction cleanup failed", error));
       pdfDocumentCache.delete(oldestKey);
+      logCacheEvent("evicted pdf-document", { key: oldestKey, entries: pdfDocumentCache.size, limit: config.pdfCacheSize });
     }
   }
 }
 
 function clearPdfDocumentCache(): void {
+  const entries = pdfDocumentCache.size;
   pdfDocumentCache.forEach((cached) => {
-    void cached.then(cleanupPdfDocument).catch(() => undefined);
+    void cached
+      .then(cleanupPdfDocument)
+      .catch((error: unknown) => logCaughtException("pdf document cache clear cleanup failed", error));
   });
   pdfDocumentCache.clear();
+  if (entries > 0) {
+    logCacheEvent("cleared pdf-document cache", { entries });
+  }
 }
 
-function getRenderedPdfPageDebugDetails(rendered: PdfRenderResult): Record<string, string | number> {
-  const estimatedBytes = rendered.canvas.width * rendered.canvas.height * 4;
+function getPdfRenderSnapshotDetails(snapshot: PdfRenderSnapshot): Record<string, string | number> {
+  const estimatedBytes = snapshot.canvasWidth * snapshot.canvasHeight * 4;
   return {
-    canvasPixels: `${rendered.canvas.width}x${rendered.canvas.height}`,
-    cssPixels: `${Math.round(rendered.renderWidth)}x${Math.round(rendered.renderHeight)}`,
+    canvasPixels: `${snapshot.canvasWidth}x${snapshot.canvasHeight}`,
+    cssPixels: `${Math.round(snapshot.renderWidth)}x${Math.round(snapshot.renderHeight)}`,
     estimatedBytes,
     estimatedSize: formatBytes(estimatedBytes)
   };
 }
 
-function logDebugCacheAddition(
+function logCacheAddition(
   cacheName: string,
   key: string,
   entries: number,
   details: Record<string, string | number>
 ): void {
-  if (!config.debug) {
-    return;
-  }
-
-  console.log(`[slider cache] added ${cacheName}`, {
+  logCacheEvent(`added ${cacheName}`, {
     key,
     entries,
     ...details
   });
+}
+
+function logCacheEvent(message: string, details: Record<string, string | number> = {}): void {
+  const payload = {
+    timestamp: new Date().toISOString(),
+    message: `[slider cache] ${message}`,
+    ...details
+  };
+  console.log(payload.message, details);
+  sendAgentLog(`${payload.timestamp} ${payload.message} ${JSON.stringify(details)}`);
+}
+
+function logCaughtException(context: string, error: unknown): void {
+  const details = getErrorDetails(error);
+  console.error(`[slider exception] ${context}`, error);
+  sendAgentLog(`${new Date().toISOString()} [slider exception] ${context} ${JSON.stringify(details)}`);
+}
+
+function getErrorDetails(error: unknown): Record<string, string> {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack || ""
+    };
+  }
+
+  return { message: String(error) };
+}
+
+function sendAgentLog(message: string): void {
+  const body = JSON.stringify({ message });
+  if (navigator.sendBeacon) {
+    navigator.sendBeacon("/log", new Blob([body], { type: "application/json" }));
+    return;
+  }
+
+  void fetch("/log", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+    keepalive: true
+  }).catch(() => undefined);
 }
 
 function formatBytes(bytes: number): string {
@@ -1857,7 +2016,8 @@ function preloadUpcomingPdfs(): void {
       return;
     }
 
-    void prefetchPdf(nextPdf).catch(() => {
+    void prefetchPdf(nextPdf).catch((error: unknown) => {
+      logCaughtException(`PDF prefetch failed for ${nextPdf.name}`, error);
       // The visible render path reports failures; background preloads should stay quiet.
     });
   });
@@ -2275,10 +2435,12 @@ async function renderPosterPdfForZoom(
     applyRenderedPdfPage(rendered, container, { outputScale: scale, releaseSourceCanvas: true });
   } catch (error: unknown) {
     if (error instanceof PdfCanvasTooLargeError && target === activeTransformTarget) {
+      logCaughtException(`poster PDF zoom render too large for ${slide.name}`, error);
       stopPdfZoomingPastCurrentScale();
       return;
     }
 
+    logCaughtException(`poster PDF zoom render failed for ${slide.name}`, error);
     if (config.debug) {
       console.warn(`[slider pdf] unable to sharpen ${slide.name}`, error);
     }
