@@ -24,7 +24,7 @@
   "poster_slides_controls_always_visible": true,
   "pan_fraction": 0.75,
   "pdf_cache_size": 200,
-  "pdf_document_cache": true,
+  "pdf_document_cache": false,
   "pdf_render_cache": true,
   "pdf_initial_render_scale": 2,
   "pdf_max_zoom_render_scale": 5,

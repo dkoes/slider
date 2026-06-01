@@ -415,12 +415,47 @@ def close_windows_chrome() -> None:
         return
 
     print("Closing Chrome processes.", flush=True)
+    for attempt in range(1, 11):
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/IM", "chrome.exe"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if not is_windows_process_running("chrome.exe"):
+            print(f"Chrome processes closed after {attempt} attempt(s).", flush=True)
+            return
+        time.sleep(0.5)
+
     subprocess.run(
-        ["taskkill", "/F", "/T", "/IM", "chrome.exe"],
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force",
+        ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
     )
+    if is_windows_process_running("chrome.exe"):
+        print("Chrome processes are still running after close attempts.", file=sys.stderr, flush=True)
+
+
+def is_windows_process_running(image_name: str) -> bool:
+    if sys.platform != "win32":
+        return False
+
+    result = subprocess.run(
+        ["tasklist", "/FI", f"IMAGENAME eq {image_name}", "/NH"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+    )
+    return image_name.lower() in result.stdout.lower()
 
 
 def quit_agent() -> None:
@@ -575,7 +610,7 @@ set "APPDIR={current_exe.parent}"
 set "LAUNCHER={launch_helper}"
 echo [%date% %time%] Update helper started for slider PID %PID%. > "%LOG%"
 echo [%date% %time%] Closing Chrome before replacement. >> "%LOG%"
-taskkill /F /T /IM chrome.exe >> "%LOG%" 2>>&1
+call :close_chrome
 echo [%date% %time%] Waiting for slider PID %PID% to exit. >> "%LOG%"
 set /a WAIT_SECONDS=0
 :wait
@@ -592,6 +627,8 @@ echo [%date% %time%] Slider PID %PID% did not exit; terminating it. >> "%LOG%"
 taskkill /F /PID %PID% >> "%LOG%" 2>>&1
 timeout /t 1 /nobreak >nul
 :replace
+echo [%date% %time%] Closing Chrome before launch. >> "%LOG%"
+call :close_chrome
 echo [%date% %time%] Replacing executable. >> "%LOG%"
 move /Y "%CURRENT%" "%OLD%" >> "%LOG%" 2>>&1
 if errorlevel 1 goto rollback
@@ -625,6 +662,30 @@ exit /b 1
 >> "%LAUNCHER%" echo echo [%%date%% %%time%%] Launching "%CURRENT%". ^>^> "%APPLOG%"
 >> "%LAUNCHER%" echo "%CURRENT%" ^>^> "%APPLOG%" 2^>^>^&1
 >> "%LAUNCHER%" echo echo [%%date%% %%time%%] Slider exited with code %%ERRORLEVEL%%. ^>^> "%APPLOG%"
+exit /b 0
+:close_chrome
+set /a CHROME_ATTEMPT=0
+:close_chrome_loop
+set /a CHROME_ATTEMPT+=1
+taskkill /F /T /IM chrome.exe >> "%LOG%" 2>>&1
+tasklist /FI "IMAGENAME eq chrome.exe" /NH | findstr /I /C:"chrome.exe" >nul
+if errorlevel 1 (
+  echo [%date% %time%] Chrome closed after !CHROME_ATTEMPT! attempt(s). >> "%LOG%"
+  exit /b 0
+)
+if !CHROME_ATTEMPT! LSS 10 (
+  timeout /t 1 /nobreak >nul
+  goto close_chrome_loop
+)
+echo [%date% %time%] Chrome still running after taskkill attempts; trying PowerShell Stop-Process. >> "%LOG%"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force" >> "%LOG%" 2>>&1
+timeout /t 1 /nobreak >nul
+tasklist /FI "IMAGENAME eq chrome.exe" /NH | findstr /I /C:"chrome.exe" >nul
+if errorlevel 1 (
+  echo [%date% %time%] Chrome closed after PowerShell fallback. >> "%LOG%"
+) else (
+  echo [%date% %time%] WARNING: Chrome still appears to be running. >> "%LOG%"
+)
 exit /b 0
 """
     helper.write_text(script, encoding="utf-8")

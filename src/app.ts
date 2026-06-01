@@ -30,7 +30,7 @@ interface PdfJsGlobal {
   GlobalWorkerOptions: {
     workerSrc: string;
   };
-  getDocument(source: string | { url: string }): {
+  getDocument(source: { url: string }): {
     promise: Promise<PdfDocumentProxy>;
   };
 }
@@ -2015,7 +2015,7 @@ function loadPdfDocument(slide: SlideItem): Promise<PdfDocumentProxy> {
     return Promise.reject(new Error("PDF.js is not available."));
   }
 
-  return pdfJs.getDocument(slide.url).promise;
+  return pdfJs.getDocument({ url: slide.url }).promise;
 }
 
 function invalidatePdfDocument(slide: SlideItem): void {
