@@ -577,6 +577,11 @@ exit /b 1
 :write_launcher
 > "%LAUNCHER%" echo @echo off
 >> "%LAUNCHER%" echo cd /d "%APPDIR%"
+>> "%LAUNCHER%" echo set "PYINSTALLER_RESET_ENVIRONMENT=1"
+>> "%LAUNCHER%" echo set "_PYI_APPLICATION_HOME_DIR="
+>> "%LAUNCHER%" echo set "_PYI_ARCHIVE_FILE="
+>> "%LAUNCHER%" echo set "_PYI_PARENT_PROCESS_LEVEL="
+>> "%LAUNCHER%" echo set "_PYI_SPLASH_IPC="
 >> "%LAUNCHER%" echo echo [%%date%% %%time%%] Launching "%CURRENT%". ^>^> "%APPLOG%"
 >> "%LAUNCHER%" echo "%CURRENT%" ^>^> "%APPLOG%" 2^>^>^&1
 >> "%LAUNCHER%" echo echo [%%date%% %%time%%] Slider exited with code %%ERRORLEVEL%%. ^>^> "%APPLOG%"
