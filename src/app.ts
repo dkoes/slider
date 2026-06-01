@@ -18,7 +18,6 @@ interface SliderGlobals {
   SLIDER_POSTER_SLIDES_CONTROLS_ALWAYS_VISIBLE?: boolean;
   SLIDER_PAN_FRACTION?: number;
   SLIDER_PDF_CACHE_SIZE?: number;
-  SLIDER_PDF_DOCUMENT_CACHE?: boolean;
   SLIDER_PDF_RENDER_CACHE?: boolean;
   SLIDER_PDF_INITIAL_RENDER_SCALE?: number;
   SLIDER_PDF_MAX_ZOOM_RENDER_SCALE?: number;
@@ -51,20 +50,6 @@ interface PdfPageProxy {
 interface PdfViewport {
   width: number;
   height: number;
-}
-
-interface PdfDocumentLease {
-  documentProxy: PdfDocumentProxy;
-  release(): Promise<void>;
-}
-
-interface PdfDocumentCacheEntry {
-  key: string;
-  promise: Promise<PdfDocumentProxy>;
-  activeUsers: number;
-  evicted: boolean;
-  released: boolean;
-  documentProxy?: PdfDocumentProxy;
 }
 
 interface SlideItem {
@@ -112,7 +97,6 @@ interface SliderConfig {
   posterSlidesControlsAlwaysVisible: boolean;
   panFraction: number;
   pdfCacheSize: number;
-  pdfDocumentCache: boolean;
   pdfRenderCache: boolean;
   pdfInitialRenderScale: number;
   pdfMaxZoomRenderScale: number;
@@ -244,7 +228,6 @@ let running = false;
 let config: SliderConfig;
 let pdfWorkerUrl = "";
 let pdfRenderCache = new Map<string, PdfRenderCacheEntry>();
-let pdfDocumentCache = new Map<string, PdfDocumentCacheEntry>();
 let pdfZoomRenderTimer = 0;
 let pdfZoomRenderToken = 0;
 let pdfZoomRenderTarget: HTMLElement | null = null;
@@ -483,11 +466,10 @@ async function runManualSync(): Promise<void> {
 async function clearCaches(): Promise<void> {
   setDevMenuOpen(false);
   clearCachesButton.disabled = true;
-  showBanner("Clearing caches...");
+    showBanner("Clearing caches...");
   try {
     cancelScheduledPdfPrefetch();
     clearPdfRenderCache();
-    clearPdfDocumentCache();
     transformByTarget = new WeakMap<HTMLElement, ViewTransform>();
     await clearBrowserCacheStorage();
     showBanner("Caches cleared.");
@@ -614,7 +596,6 @@ function getConfig(): SliderConfig {
   const liveStreams = normalizeLiveStreams(globals.SLIDER_LIVE_STREAMS || defaultLiveStreams);
   const rawPdfCacheSize = params.get("pdf_cache_size");
   const parsedPdfCacheSize = rawPdfCacheSize ? Number(rawPdfCacheSize) : Number(globals.SLIDER_PDF_CACHE_SIZE);
-  const pdfDocumentCache = parseBooleanParam(params.get("pdf_document_cache"), globals.SLIDER_PDF_DOCUMENT_CACHE ?? true);
   const pdfRenderCache = parseBooleanParam(params.get("pdf_render_cache"), globals.SLIDER_PDF_RENDER_CACHE ?? false);
   const rawPdfInitialRenderScale = params.get("pdf_initial_render_scale");
   const parsedPdfInitialRenderScale = rawPdfInitialRenderScale
@@ -648,7 +629,6 @@ function getConfig(): SliderConfig {
     posterSlidesControlsAlwaysVisible,
     panFraction: Number.isFinite(parsedPanFraction) && parsedPanFraction > 0 && parsedPanFraction <= 1 ? parsedPanFraction : 0.85,
     pdfCacheSize: Number.isFinite(parsedPdfCacheSize) && parsedPdfCacheSize >= 0 ? Math.floor(parsedPdfCacheSize) : 200,
-    pdfDocumentCache,
     pdfRenderCache,
     pdfInitialRenderScale: Number.isFinite(parsedPdfInitialRenderScale) && parsedPdfInitialRenderScale > 0 ? parsedPdfInitialRenderScale : 2,
     pdfMaxZoomRenderScale: Number.isFinite(parsedPdfMaxZoomRenderScale) && parsedPdfMaxZoomRenderScale > 0 ? parsedPdfMaxZoomRenderScale : 5,
@@ -1790,7 +1770,6 @@ async function renderPdfPageToCanvas(
     return await renderPdfPageToCanvasOnce(slide, viewportSize, outputScale, renderMode);
   } catch (error) {
     logCaughtException(`render PDF retrying after failure for ${slide.name}`, error);
-    invalidatePdfDocument(slide);
     return renderPdfPageToCanvasOnce(slide, viewportSize, outputScale, renderMode);
   }
 }
@@ -1876,8 +1855,7 @@ async function renderPdfPageToCanvasOnce(
     throw new Error("PDF.js is not available.");
   }
 
-  const documentLease = await getPdfDocumentLease(slide);
-  const { documentProxy } = documentLease;
+  const documentProxy = await loadPdfDocument(slide);
   try {
     const page = await documentProxy.getPage(1);
     const baseViewport = page.getViewport({ scale: 1 });
@@ -1916,97 +1894,8 @@ async function renderPdfPageToCanvasOnce(
       outputScale
     };
   } finally {
-    await documentLease.release();
+    await cleanupPdfDocument(documentProxy);
   }
-}
-
-async function getPdfDocumentLease(slide: SlideItem): Promise<PdfDocumentLease> {
-  if (!config.pdfDocumentCache) {
-    const documentProxy = await loadPdfDocument(slide);
-    return {
-      documentProxy,
-      release: () => cleanupPdfDocument(documentProxy)
-    };
-  }
-
-  return getCachedPdfDocumentLease(slide);
-}
-
-async function getCachedPdfDocumentLease(slide: SlideItem): Promise<PdfDocumentLease> {
-  const key = getPdfDocumentCacheKey(slide);
-  const cached = pdfDocumentCache.get(key);
-  if (cached) {
-    pdfDocumentCache.delete(key);
-    pdfDocumentCache.set(key, cached);
-    return acquirePdfDocumentCacheEntry(cached);
-  }
-
-  const entry: PdfDocumentCacheEntry = {
-    key,
-    promise: loadPdfDocument(slide),
-    activeUsers: 0,
-    evicted: false,
-    released: false
-  };
-  pdfDocumentCache.set(key, entry);
-  trimPdfDocumentCache();
-  void entry.promise.then((documentProxy) => {
-    entry.documentProxy = documentProxy;
-    releasePdfDocumentCacheEntryIfUnused(entry);
-    if (pdfDocumentCache.get(key) === entry) {
-      logCacheAddition("pdf-document", key, pdfDocumentCache.size, {
-        pages: documentProxy.numPages,
-        size: "unknown"
-      });
-    }
-  }).catch((error: unknown) => logCaughtException("pdf document cache addition logging failed", error));
-  entry.promise.catch((error: unknown) => {
-    if (pdfDocumentCache.get(key) === entry) {
-      logCaughtException("pdf document cache entry failed", error);
-      pdfDocumentCache.delete(key);
-    }
-  });
-  return acquirePdfDocumentCacheEntry(entry);
-}
-
-async function acquirePdfDocumentCacheEntry(entry: PdfDocumentCacheEntry): Promise<PdfDocumentLease> {
-  entry.activeUsers += 1;
-  let released = false;
-  try {
-    const documentProxy = await entry.promise;
-    return {
-      documentProxy,
-      release: async () => {
-        if (released) {
-          return;
-        }
-        released = true;
-        entry.activeUsers = Math.max(0, entry.activeUsers - 1);
-        releasePdfDocumentCacheEntryIfUnused(entry);
-      }
-    };
-  } catch (error) {
-    entry.activeUsers = Math.max(0, entry.activeUsers - 1);
-    releasePdfDocumentCacheEntryIfUnused(entry);
-    throw error;
-  }
-}
-
-function evictPdfDocumentCacheEntry(key: string, entry: PdfDocumentCacheEntry): void {
-  if (pdfDocumentCache.get(key) === entry) {
-    pdfDocumentCache.delete(key);
-  }
-  entry.evicted = true;
-  releasePdfDocumentCacheEntryIfUnused(entry);
-}
-
-function releasePdfDocumentCacheEntryIfUnused(entry: PdfDocumentCacheEntry): void {
-  if (!entry.evicted || entry.activeUsers > 0 || entry.released || !entry.documentProxy) {
-    return;
-  }
-
-  entry.released = true;
-  void cleanupPdfDocument(entry.documentProxy);
 }
 
 function loadPdfDocument(slide: SlideItem): Promise<PdfDocumentProxy> {
@@ -2018,30 +1907,15 @@ function loadPdfDocument(slide: SlideItem): Promise<PdfDocumentProxy> {
   return pdfJs.getDocument({ url: slide.url }).promise;
 }
 
-function invalidatePdfDocument(slide: SlideItem): void {
-  const key = getPdfDocumentCacheKey(slide);
-  const cached = pdfDocumentCache.get(key);
-  if (cached) {
-    evictPdfDocumentCacheEntry(key, cached);
-  }
-  if (config.debug) {
-    console.warn("[slider cache] invalidated pdf-document", { key });
-  }
-}
-
 async function cleanupPdfDocument(documentProxy: PdfDocumentProxy): Promise<void> {
   try {
     await documentProxy.cleanup();
   } catch (error) {
-    logCaughtException("pdf document cleanup failed", error);
+    logCaughtException("PDF document cleanup failed", error);
     if (config.debug) {
-      console.warn("[slider cache] pdf-document cleanup failed", error);
+      console.warn("[slider pdf] document cleanup failed", error);
     }
   }
-}
-
-function getPdfDocumentCacheKey(slide: SlideItem): string {
-  return `${slide.url}|${slide.modified || ""}`;
 }
 
 function getPdfCacheKey(
@@ -2091,39 +1965,6 @@ function clearPdfRenderCache(): void {
   pdfRenderCache.clear();
   if (entries > 0) {
     logCacheEvent("cleared pdf-render cache", { entries });
-  }
-}
-
-function trimPdfDocumentCache(): void {
-  if (!config.pdfDocumentCache || config.pdfCacheSize <= 0) {
-    if (pdfDocumentCache.size > 0) {
-      logCacheEvent("clearing pdf-document cache", { entries: pdfDocumentCache.size, reason: "disabled-or-zero-size" });
-    }
-    clearPdfDocumentCache();
-    return;
-  }
-
-  while (pdfDocumentCache.size > config.pdfCacheSize) {
-    const oldestKey = pdfDocumentCache.keys().next().value;
-    if (!oldestKey) {
-      return;
-    }
-    const cached = pdfDocumentCache.get(oldestKey);
-    if (cached) {
-      evictPdfDocumentCacheEntry(oldestKey, cached);
-      logCacheEvent("evicted pdf-document", { key: oldestKey, entries: pdfDocumentCache.size, limit: config.pdfCacheSize });
-    }
-  }
-}
-
-function clearPdfDocumentCache(): void {
-  const entries = pdfDocumentCache.size;
-  pdfDocumentCache.forEach((cached, key) => {
-    evictPdfDocumentCacheEntry(key, cached);
-  });
-  pdfDocumentCache.clear();
-  if (entries > 0) {
-    logCacheEvent("cleared pdf-document cache", { entries });
   }
 }
 
@@ -2207,7 +2048,7 @@ function formatBytes(bytes: number): string {
 }
 
 function preloadUpcomingPdfs(): void {
-  if (!config.pdfDocumentCache || config.pdfCacheSize <= 0 || !getPdfJsLib()) {
+  if (!config.pdfRenderCache || config.pdfCacheSize <= 0 || !getPdfJsLib()) {
     return;
   }
 
@@ -2261,12 +2102,6 @@ function cancelScheduledPdfPrefetch(): void {
 }
 
 async function prefetchPdf(slide: SlideItem): Promise<void> {
-  const lease = await getCachedPdfDocumentLease(slide);
-  await lease.release();
-  if (!config.pdfRenderCache) {
-    return;
-  }
-
   await getRenderedPdfPage(slide, getExpectedPdfViewportSize(), config.pdfInitialRenderScale);
 }
 
