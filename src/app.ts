@@ -187,6 +187,7 @@ const fullscreenDivider = mustGetElement("fullscreen-divider");
 const fullscreenButton = mustGetElement("menu-fullscreen") as HTMLButtonElement;
 const updateButton = mustGetElement("menu-update") as HTMLButtonElement;
 const manualSyncButton = mustGetElement("menu-manual-sync") as HTMLButtonElement;
+const clearRenderCacheButton = mustGetElement("menu-clear-render-cache") as HTMLButtonElement;
 const clearCachesButton = mustGetElement("menu-clear-caches") as HTMLButtonElement;
 const quitButton = mustGetElement("menu-quit") as HTMLButtonElement;
 const labsMenu = mustGetElement("labs-menu");
@@ -370,6 +371,9 @@ function wireControls(): void {
   manualSyncButton.addEventListener("click", () => {
     void runManualSync();
   });
+  clearRenderCacheButton.addEventListener("click", () => {
+    clearRenderCache();
+  });
   clearCachesButton.addEventListener("click", () => {
     void clearCaches();
   });
@@ -492,6 +496,22 @@ async function clearCaches(): Promise<void> {
     showBanner(`Unable to clear caches: ${getErrorMessage(error)}`);
   } finally {
     clearCachesButton.disabled = false;
+  }
+}
+
+function clearRenderCache(): void {
+  setDevMenuOpen(false);
+  clearRenderCacheButton.disabled = true;
+  showBanner("Clearing render cache...");
+  try {
+    cancelScheduledPdfPrefetch();
+    clearPdfRenderCache();
+    showBanner("Render cache cleared.");
+  } catch (error: unknown) {
+    logCaughtException("clear render cache failed", error);
+    showBanner(`Unable to clear render cache: ${getErrorMessage(error)}`);
+  } finally {
+    clearRenderCacheButton.disabled = false;
   }
 }
 
