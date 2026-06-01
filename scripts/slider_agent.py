@@ -79,6 +79,7 @@ class AgentConfig:
 
 def main() -> int:
     config = parse_args()
+    print(f"Slider agent version {APP_VERSION}")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     config.slides_dir.mkdir(parents=True, exist_ok=True)
     config.labs_dir.mkdir(parents=True, exist_ok=True)
