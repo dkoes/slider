@@ -396,16 +396,16 @@ async function checkForUpdates(): Promise<void> {
   setMenuOpen(false);
   setDevMenuOpen(false);
   updateButton.disabled = true;
-  showBanner("Checking for updates...");
+  showBanner("Installing latest version...");
   try {
     const response = await fetch("/update/check", { method: "POST", cache: "no-store" });
     const payload = await response.json() as { message?: string; status?: string };
     if (!response.ok) {
-      throw new Error(payload.message || `Update check failed (${response.status}).`);
+      throw new Error(payload.message || `Update failed (${response.status}).`);
     }
-    showBanner(payload.message || "Update check complete.");
+    showBanner(payload.message || "Update started.");
   } catch (error: unknown) {
-    showBanner(`Update check failed: ${getErrorMessage(error)}`);
+    showBanner(`Update failed: ${getErrorMessage(error)}`);
   } finally {
     updateButton.disabled = false;
   }

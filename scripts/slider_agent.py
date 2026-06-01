@@ -446,23 +446,15 @@ def check_for_update(config: AgentConfig) -> dict[str, Any]:
     if not latest_version or not download_url or not expected_sha256:
         raise RuntimeError("Update manifest must include version, url, and sha256.")
 
-    if compare_versions(latest_version, APP_VERSION) <= 0:
-        return {
-            "status": "current",
-            "message": f"Slider is up to date ({APP_VERSION}).",
-            "version": APP_VERSION,
-            "latestVersion": latest_version,
-        }
-
     if sys.platform != "win32" or not getattr(sys, "frozen", False):
         return {
             "status": "available",
-            "message": f"Update {latest_version} is available, but automatic replacement is only supported by the Windows executable.",
+            "message": f"Latest version {latest_version} is available, but automatic replacement is only supported by the Windows executable.",
             "version": APP_VERSION,
             "latestVersion": latest_version,
         }
 
-    print(f"Update {latest_version} is available; downloading from {download_url}", flush=True)
+    print(f"Installing latest version {latest_version}; downloading from {download_url}", flush=True)
     new_exe = Path(sys.executable).with_suffix(Path(sys.executable).suffix + ".new")
     download_update(download_url, new_exe)
     print(f"Downloaded update to {new_exe}", flush=True)
@@ -597,20 +589,6 @@ def launch_update_helper(helper: Path, pid: int) -> None:
         creationflags |= subprocess.DETACHED_PROCESS
     process = subprocess.Popen(command, cwd=str(helper.parent), close_fds=True, creationflags=creationflags)
     print(f"Update helper process started with PID {process.pid}.", flush=True)
-
-
-def compare_versions(left: str, right: str) -> int:
-    left_parts = parse_version(left)
-    right_parts = parse_version(right)
-    max_len = max(len(left_parts), len(right_parts))
-    left_parts.extend([0] * (max_len - len(left_parts)))
-    right_parts.extend([0] * (max_len - len(right_parts)))
-    return (left_parts > right_parts) - (left_parts < right_parts)
-
-
-def parse_version(value: str) -> list[int]:
-    parts = re.findall(r"\d+", value)
-    return [int(part) for part in parts] or [0]
 
 
 def sync_loop(syncer: "SharePointSyncer", interval_seconds: int, after_first_sync: Any = None) -> None:
