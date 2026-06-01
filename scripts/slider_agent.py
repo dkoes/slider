@@ -522,6 +522,7 @@ def write_update_helper(current_exe: Path, new_exe: Path) -> Path:
     old_exe = current_exe.with_suffix(current_exe.suffix + ".old")
     log_path = current_exe.with_suffix(".update.log")
     relaunch_log_path = current_exe.with_suffix(".log")
+    launch_helper = current_exe.with_suffix(".launch.cmd")
     script = f"""@echo off
 setlocal EnableExtensions EnableDelayedExpansion
 set "PID=%~1"
@@ -531,6 +532,7 @@ set "OLD={old_exe}"
 set "LOG={log_path}"
 set "APPLOG={relaunch_log_path}"
 set "APPDIR={current_exe.parent}"
+set "LAUNCHER={launch_helper}"
 echo [%date% %time%] Update helper started for slider PID %PID%. > "%LOG%"
 echo [%date% %time%] Closing Chrome before replacement. >> "%LOG%"
 taskkill /F /T /IM chrome.exe >> "%LOG%" 2>>&1
@@ -556,7 +558,8 @@ if errorlevel 1 goto rollback
 move /Y "%NEW%" "%CURRENT%" >> "%LOG%" 2>>&1
 if errorlevel 1 goto rollback
 echo [%date% %time%] Starting updated slider. >> "%LOG%"
-start "Slider" /D "%APPDIR%" "%CURRENT%" >> "%APPLOG%" 2>>&1
+call :write_launcher
+start "Slider" /D "%APPDIR%" "%LAUNCHER%" >> "%LOG%" 2>>&1
 if errorlevel 1 goto rollback
 timeout /t 3 /nobreak >nul
 del "%OLD%" >nul 2>nul
@@ -566,8 +569,18 @@ exit /b 0
 echo [%date% %time%] Update failed; rolling back. >> "%LOG%"
 if exist "%OLD%" move /Y "%OLD%" "%CURRENT%" >> "%LOG%" 2>>&1
 del "%NEW%" >nul 2>nul
-if exist "%CURRENT%" start "Slider" /D "%APPDIR%" "%CURRENT%" >> "%APPLOG%" 2>>&1
+if exist "%CURRENT%" (
+  call :write_launcher
+  start "Slider" /D "%APPDIR%" "%LAUNCHER%" >> "%LOG%" 2>>&1
+)
 exit /b 1
+:write_launcher
+> "%LAUNCHER%" echo @echo off
+>> "%LAUNCHER%" echo cd /d "%APPDIR%"
+>> "%LAUNCHER%" echo echo [%%date%% %%time%%] Launching "%CURRENT%". ^>^> "%APPLOG%"
+>> "%LAUNCHER%" echo "%CURRENT%" ^>^> "%APPLOG%" 2^>^>^&1
+>> "%LAUNCHER%" echo echo [%%date%% %%time%%] Slider exited with code %%ERRORLEVEL%%. ^>^> "%APPLOG%"
+exit /b 0
 """
     helper.write_text(script, encoding="utf-8")
     return helper
