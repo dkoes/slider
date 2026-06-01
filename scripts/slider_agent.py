@@ -636,7 +636,7 @@ if errorlevel 1 goto rollback
 echo [%date% %time%] Starting updated slider. >> "%LOG%"
 call :write_launcher
 start "Slider" /D "%APPDIR%" "%LAUNCHER%" >> "%LOG%" 2>>&1
-if errorlevel 1 goto rollback
+if errorlevel 1 echo [%date% %time%] WARNING: Updated slider launcher did not start automatically; "%CURRENT%" is installed for manual launch. >> "%LOG%"
 timeout /t 3 /nobreak >nul
 del "%OLD%" >nul 2>nul
 echo [%date% %time%] Update helper completed. >> "%LOG%"
@@ -663,6 +663,11 @@ exit /b 1
 >> "%LAUNCHER%" echo echo [%%date%% %%time%%] Slider exited with code %%ERRORLEVEL%%. ^>^> "%APPLOG%"
 exit /b 0
 :close_chrome
+tasklist /FI "IMAGENAME eq chrome.exe" /NH | findstr /I /C:"chrome.exe" >nul
+if errorlevel 1 (
+  echo [%date% %time%] Chrome is not running. >> "%LOG%"
+  exit /b 0
+)
 set /a CHROME_ATTEMPT=0
 :close_chrome_loop
 set /a CHROME_ATTEMPT+=1
