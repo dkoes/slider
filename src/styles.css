@@ -613,8 +613,8 @@ body {
 
 .poster-preview .pdfjs-page canvas {
   width: 100%;
-  height: 100%;
-  object-fit: contain;
+  height: auto;
+  max-width: 100%;
 }
 
 .poster-option span {

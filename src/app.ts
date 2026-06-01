@@ -150,8 +150,11 @@ interface PdfRenderCacheEntry {
 
 interface PdfRenderOptions {
   outputScale?: number;
+  renderMode?: PdfRenderMode;
   useCache?: boolean;
 }
+
+type PdfRenderMode = "fit" | "width";
 
 interface LiveStreamConfig {
   name: string;
@@ -196,6 +199,7 @@ const liveStreamTime = mustGetElement("live-stream-time");
 const liveStreamReset = mustGetElement("live-stream-reset") as HTMLButtonElement;
 const maxPdfCanvasDimension = 16384;
 const maxPdfCanvasPixels = 128 * 1024 * 1024;
+const pdfThumbnailRenderScale = 2;
 const devMenuLongPressMs = 5000;
 
 class PdfCanvasTooLargeError extends Error {
@@ -1483,7 +1487,7 @@ function createPdfThumbnailContent(slide: SlideItem): HTMLElement {
   const canvas = document.createElement("canvas");
   container.append(canvas);
 
-  renderPdfPage(slide, container).catch((error: unknown) => {
+  renderPdfPage(slide, container, { outputScale: getPdfThumbnailRenderScale(), renderMode: "width" }).catch((error: unknown) => {
     logCaughtException(`render PDF thumbnail failed for ${slide.name}`, error);
     if (!container.isConnected) {
       return;
@@ -1511,8 +1515,8 @@ async function renderPdfPage(
 
   const outputScale = options.outputScale || config.pdfInitialRenderScale;
   const rendered = options.useCache === false
-    ? await renderPdfPageToCanvasWithScaleFallback(slide, viewportSize, outputScale)
-    : await getRenderedPdfPage(slide, viewportSize, outputScale);
+    ? await renderPdfPageToCanvasWithScaleFallback(slide, viewportSize, outputScale, options.renderMode)
+    : await getRenderedPdfPage(slide, viewportSize, outputScale, options.renderMode);
 
   if (!container.isConnected) {
     releaseCanvas(rendered.canvas);
@@ -1549,9 +1553,10 @@ function applyRenderedPdfPage(
 
   assertUsablePdfCanvasSize(rendered.canvas.width, rendered.canvas.height);
 
+  const canvasSize = getVisiblePdfCanvasSize(rendered, outputScale, container);
   const nextCanvas = document.createElement("canvas");
-  nextCanvas.width = rendered.canvas.width;
-  nextCanvas.height = rendered.canvas.height;
+  nextCanvas.width = canvasSize.width;
+  nextCanvas.height = canvasSize.height;
   container.style.setProperty("--pdf-fit-width", `${rendered.fitWidth}px`);
   container.style.setProperty("--pdf-fit-height", `${rendered.fitHeight}px`);
   container.style.setProperty("--pdf-render-width", `${rendered.renderWidth}px`);
@@ -1564,8 +1569,7 @@ function applyRenderedPdfPage(
   }
 
   try {
-    configureCanvasScaling(context);
-    context.drawImage(rendered.canvas, 0, 0);
+    drawCanvasResampled(rendered.canvas, nextCanvas, context);
     canvas.replaceWith(nextCanvas);
   } finally {
     if (options.releaseSourceCanvas) {
@@ -1574,6 +1578,35 @@ function applyRenderedPdfPage(
   }
   container.dataset.renderScale = String(outputScale);
   container.dispatchEvent(new Event("pdf-rendered"));
+}
+
+function getVisiblePdfCanvasSize(
+  rendered: PdfRenderResult,
+  outputScale: number,
+  container: HTMLElement
+): { width: number; height: number } {
+  const preserveZoomDetail = isPosterDisplayMode() && activeTransform.scale > 1.01;
+  const preserveThumbnailDetail = container.classList.contains("pdfjs-thumbnail");
+  const visibleOutputScale = preserveZoomDetail || preserveThumbnailDetail ? outputScale : 1;
+  const cssWidth = isPosterDisplayMode() || preserveThumbnailDetail ? rendered.renderWidth : rendered.fitWidth;
+  const cssHeight = isPosterDisplayMode() || preserveThumbnailDetail ? rendered.renderHeight : rendered.fitHeight;
+  const width = Math.min(rendered.canvas.width, Math.max(1, Math.ceil(cssWidth * window.devicePixelRatio * visibleOutputScale)));
+  const height = Math.min(rendered.canvas.height, Math.max(1, Math.ceil(cssHeight * window.devicePixelRatio * visibleOutputScale)));
+  assertUsablePdfCanvasSize(width, height);
+  return { width, height };
+}
+
+function getPdfThumbnailRenderScale(): number {
+  return Math.max(pdfThumbnailRenderScale, config.pdfInitialRenderScale);
+}
+
+function drawCanvasResampled(
+  source: HTMLCanvasElement,
+  target: HTMLCanvasElement,
+  targetContext: CanvasRenderingContext2D
+): void {
+  configureCanvasScaling(targetContext);
+  targetContext.drawImage(source, 0, 0, target.width, target.height);
 }
 
 function releaseCanvas(canvas: HTMLCanvasElement): void {
@@ -1599,13 +1632,14 @@ function assertUsablePdfCanvasSize(width: number, height: number): void {
 async function getRenderedPdfPage(
   slide: SlideItem,
   viewportSize: { width: number; height: number },
-  outputScale: number
+  outputScale: number,
+  renderMode: PdfRenderMode = "fit"
 ): Promise<PdfRenderResult> {
   if (!config.pdfRenderCache) {
-    return renderPdfPageToCanvasWithScaleFallback(slide, viewportSize, outputScale);
+    return renderPdfPageToCanvasWithScaleFallback(slide, viewportSize, outputScale, renderMode);
   }
 
-  const key = getPdfCacheKey(slide, viewportSize, outputScale);
+  const key = getPdfCacheKey(slide, viewportSize, outputScale, renderMode);
   const cached = pdfRenderCache.get(key);
   if (cached) {
     pdfRenderCache.delete(key);
@@ -1624,7 +1658,7 @@ async function getRenderedPdfPage(
 
   const entry: PdfRenderCacheEntry = {
     key,
-    promise: renderPdfPageToCanvasWithScaleFallback(slide, viewportSize, outputScale)
+    promise: renderPdfPageToCanvasWithScaleFallback(slide, viewportSize, outputScale, renderMode)
       .then(snapshotPdfRender),
     activeUsers: 0,
     evicted: false,
@@ -1650,7 +1684,7 @@ async function getRenderedPdfPage(
   } catch (error: unknown) {
     logCaughtException("new PDF render cache materialization failed; re-rendering", error);
     evictPdfRenderCacheEntry(key, entry);
-    return renderPdfPageToCanvasWithScaleFallback(slide, viewportSize, outputScale);
+    return renderPdfPageToCanvasWithScaleFallback(slide, viewportSize, outputScale, renderMode);
   }
 }
 
@@ -1684,14 +1718,15 @@ function releasePdfRenderCacheEntryIfUnused(entry: PdfRenderCacheEntry): void {
 async function renderPdfPageToCanvas(
   slide: SlideItem,
   viewportSize: { width: number; height: number },
-  outputScale = 1
+  outputScale = 1,
+  renderMode: PdfRenderMode = "fit"
 ): Promise<PdfRenderResult> {
   try {
-    return await renderPdfPageToCanvasOnce(slide, viewportSize, outputScale);
+    return await renderPdfPageToCanvasOnce(slide, viewportSize, outputScale, renderMode);
   } catch (error) {
     logCaughtException(`render PDF retrying after failure for ${slide.name}`, error);
     invalidatePdfDocument(slide);
-    return renderPdfPageToCanvasOnce(slide, viewportSize, outputScale);
+    return renderPdfPageToCanvasOnce(slide, viewportSize, outputScale, renderMode);
   }
 }
 
@@ -1746,10 +1781,11 @@ function releasePdfRenderSnapshot(snapshot: PdfRenderSnapshot): void {
 async function renderPdfPageToCanvasWithScaleFallback(
   slide: SlideItem,
   viewportSize: { width: number; height: number },
-  outputScale: number
+  outputScale: number,
+  renderMode: PdfRenderMode = "fit"
 ): Promise<PdfRenderResult> {
   try {
-    return await renderPdfPageToCanvas(slide, viewportSize, outputScale);
+    return await renderPdfPageToCanvas(slide, viewportSize, outputScale, renderMode);
   } catch (error) {
     if (outputScale <= 1 || !(error instanceof PdfCanvasTooLargeError)) {
       throw error;
@@ -1759,14 +1795,15 @@ async function renderPdfPageToCanvasWithScaleFallback(
     if (config.debug) {
       console.warn(`[slider pdf] initial render scale ${outputScale} is too large for ${slide.name}; falling back to 1x`);
     }
-    return renderPdfPageToCanvas(slide, viewportSize, 1);
+    return renderPdfPageToCanvas(slide, viewportSize, 1, renderMode);
   }
 }
 
 async function renderPdfPageToCanvasOnce(
   slide: SlideItem,
   viewportSize: { width: number; height: number },
-  outputScale = 1
+  outputScale = 1,
+  renderMode: PdfRenderMode = "fit"
 ): Promise<PdfRenderResult> {
   if (!getPdfJsLib()) {
     throw new Error("PDF.js is not available.");
@@ -1781,7 +1818,7 @@ async function renderPdfPageToCanvasOnce(
     const viewportHeight = viewportSize.height;
     const fitScale = Math.min(viewportWidth / baseViewport.width, viewportHeight / baseViewport.height);
     const fullWidthScale = viewportWidth / baseViewport.width;
-    const renderScale = Math.max(fitScale, isPosterDisplayMode() ? fullWidthScale : fitScale);
+    const renderScale = renderMode === "width" || isPosterDisplayMode() ? fullWidthScale : fitScale;
     const renderViewport = page.getViewport({ scale: renderScale * window.devicePixelRatio * outputScale });
     const cssWidth = baseViewport.width * renderScale;
     const cssHeight = baseViewport.height * renderScale;
@@ -1939,7 +1976,12 @@ function getPdfDocumentCacheKey(slide: SlideItem): string {
   return `${slide.url}|${slide.modified || ""}`;
 }
 
-function getPdfCacheKey(slide: SlideItem, viewportSize: { width: number; height: number }, outputScale: number): string {
+function getPdfCacheKey(
+  slide: SlideItem,
+  viewportSize: { width: number; height: number },
+  outputScale: number,
+  renderMode: PdfRenderMode
+): string {
   return [
     slide.url,
     slide.modified || "",
@@ -1947,7 +1989,7 @@ function getPdfCacheKey(slide: SlideItem, viewportSize: { width: number; height:
     Math.round(viewportSize.height),
     window.devicePixelRatio,
     outputScale,
-    isPosterDisplayMode() ? "poster" : "fit"
+    isPosterDisplayMode() ? "poster" : renderMode
   ].join("|");
 }
 
