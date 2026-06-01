@@ -460,6 +460,7 @@ def check_for_update(config: AgentConfig) -> dict[str, Any]:
 
     remove_mark_of_the_web(new_exe)
     helper = write_update_helper(Path(sys.executable), new_exe)
+    close_windows_chrome()
     launch_update_helper(helper, os.getpid())
     threading.Timer(1.0, lambda: os._exit(0)).start()
     return {
@@ -512,19 +513,25 @@ def write_update_helper(current_exe: Path, new_exe: Path) -> Path:
     helper = current_exe.with_suffix(".update.cmd")
     old_exe = current_exe.with_suffix(current_exe.suffix + ".old")
     log_path = current_exe.with_suffix(".update.log")
+    relaunch_log_path = current_exe.with_suffix(".log")
     script = f"""@echo off
-setlocal
+setlocal EnableExtensions EnableDelayedExpansion
 set "PID=%~1"
 set "CURRENT={current_exe}"
 set "NEW={new_exe}"
 set "OLD={old_exe}"
 set "LOG={log_path}"
-echo [%date% %time%] Waiting for slider PID %PID% to exit. > "%LOG%"
+set "APPLOG={relaunch_log_path}"
+set "APPDIR={current_exe.parent}"
+echo [%date% %time%] Update helper started for slider PID %PID%. > "%LOG%"
+echo [%date% %time%] Closing Chrome before replacement. >> "%LOG%"
+taskkill /F /T /IM chrome.exe >> "%LOG%" 2>>&1
+echo [%date% %time%] Waiting for slider PID %PID% to exit. >> "%LOG%"
 set /a WAIT_SECONDS=0
 :wait
-tasklist /FI "PID eq %PID%" | find "%PID%" >nul
+tasklist /FI "PID eq %PID%" /NH | findstr /R /C:"^.* %PID% " >nul
 if not errorlevel 1 (
-  if %WAIT_SECONDS% GEQ 20 goto force_exit
+  if !WAIT_SECONDS! GEQ 20 goto force_exit
   timeout /t 1 /nobreak >nul
   set /a WAIT_SECONDS+=1
   goto wait
@@ -532,27 +539,26 @@ if not errorlevel 1 (
 goto replace
 :force_exit
 echo [%date% %time%] Slider PID %PID% did not exit; terminating it. >> "%LOG%"
-taskkill /F /T /PID %PID% >> "%LOG%" 2>>&1
+taskkill /F /PID %PID% >> "%LOG%" 2>>&1
 timeout /t 1 /nobreak >nul
 :replace
-echo [%date% %time%] Closing Chrome before replacement. >> "%LOG%"
-taskkill /F /T /IM chrome.exe >> "%LOG%" 2>>&1
 echo [%date% %time%] Replacing executable. >> "%LOG%"
-move /Y "%CURRENT%" "%OLD%" >nul
+move /Y "%CURRENT%" "%OLD%" >> "%LOG%" 2>>&1
 if errorlevel 1 goto rollback
-move /Y "%NEW%" "%CURRENT%" >nul
+move /Y "%NEW%" "%CURRENT%" >> "%LOG%" 2>>&1
 if errorlevel 1 goto rollback
 echo [%date% %time%] Starting updated slider. >> "%LOG%"
-start "Slider" /D "{current_exe.parent}" "%CURRENT%"
+start "Slider" /D "%APPDIR%" "%CURRENT%" >> "%APPLOG%" 2>>&1
+if errorlevel 1 goto rollback
 timeout /t 3 /nobreak >nul
 del "%OLD%" >nul 2>nul
 echo [%date% %time%] Update helper completed. >> "%LOG%"
 exit /b 0
 :rollback
 echo [%date% %time%] Update failed; rolling back. >> "%LOG%"
-if exist "%OLD%" move /Y "%OLD%" "%CURRENT%" >nul
+if exist "%OLD%" move /Y "%OLD%" "%CURRENT%" >> "%LOG%" 2>>&1
 del "%NEW%" >nul 2>nul
-start "Slider" /D "{current_exe.parent}" "%CURRENT%"
+if exist "%CURRENT%" start "Slider" /D "%APPDIR%" "%CURRENT%" >> "%APPLOG%" 2>>&1
 exit /b 1
 """
     helper.write_text(script, encoding="utf-8")
