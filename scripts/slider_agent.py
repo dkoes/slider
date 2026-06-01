@@ -575,20 +575,23 @@ exit /b 1
 
 def launch_update_helper(helper: Path, pid: int) -> None:
     comspec = os.environ.get("COMSPEC", "cmd.exe")
-    command_line = f'start "" /min /D "{helper.parent}" "{comspec}" /d /c call "{helper}" {pid}'
     command = [
         comspec,
         "/d",
         "/c",
-        command_line,
+        "call",
+        str(helper),
+        str(pid),
     ]
     creationflags = 0
     if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
         creationflags |= subprocess.CREATE_NEW_PROCESS_GROUP
     if hasattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB"):
         creationflags |= subprocess.CREATE_BREAKAWAY_FROM_JOB
+    if hasattr(subprocess, "CREATE_NO_WINDOW"):
+        creationflags |= subprocess.CREATE_NO_WINDOW
     process = subprocess.Popen(command, cwd=str(helper.parent), close_fds=True, creationflags=creationflags)
-    print(f"Update helper launcher started with PID {process.pid}.", flush=True)
+    print(f"Update helper started with PID {process.pid}.", flush=True)
 
 
 def sync_loop(syncer: "SharePointSyncer", interval_seconds: int, after_first_sync: Any = None) -> None:
