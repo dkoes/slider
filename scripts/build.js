@@ -47,8 +47,9 @@ const [template, css, js, agentSource, pdfJs, pdfWorkerJs] = await Promise.all([
 ]);
 
 const sliderConfig = await readOptionalJson(resolve(root, "slider_config.json"));
-const sliderDefaults = getSliderDefaults(sliderConfig);
-const agentDefaults = getAgentDefaults(sliderConfig);
+const version = getGitVersion();
+const sliderDefaults = getSliderDefaults(sliderConfig, version);
+const agentDefaults = getAgentDefaults(sliderConfig, version);
 const html = template
   .replace("__SLIDER_DEFAULTS__", () => formatSliderDefaults(sliderDefaults))
   .replace("__RUNTIME_SLIDER_DEFAULTS__", () => "      /* __RUNTIME_SLIDER_DEFAULTS__ */")
@@ -89,13 +90,14 @@ async function readOptionalJson(path) {
   }
 }
 
-function getSliderDefaults(config) {
+function getSliderDefaults(config, appVersion) {
   const timePerSlideSeconds = positiveNumber(
     firstDefined(config.time_per_slide_seconds, config.time_seconds, config.time),
     30
   );
 
   return {
+    appVersion,
     manifestUrl: stringValue(firstDefined(config.manifest_url, config.manifest), "/manifest.json"),
     timePerSlideSeconds,
     posterTimeSeconds: positiveNumber(
@@ -125,9 +127,9 @@ function getSliderDefaults(config) {
   };
 }
 
-function getAgentDefaults(config) {
+function getAgentDefaults(config, version) {
   return {
-    version: getGitVersion(),
+    version,
     folderUrl: stringValue(config.folder_url, ""),
     host: stringValue(config.host, "127.0.0.1"),
     port: positiveInteger(config.port, 8788),
@@ -186,6 +188,7 @@ function replacePythonConstant(source, name, value) {
 function formatSliderDefaults(defaults) {
   // These are build-time defaults. Runtime URL parameters remain the final override.
   const assignments = [
+    ["SLIDER_APP_VERSION", defaults.appVersion],
     ["SLIDER_MANIFEST_URL", defaults.manifestUrl],
     ["SLIDER_TIME_PER_SLIDE_SECONDS", defaults.timePerSlideSeconds],
     ["SLIDER_POSTER_TIME_SECONDS", defaults.posterTimeSeconds],

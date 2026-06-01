@@ -5,6 +5,7 @@ type AppMode = AutoplayMode | "lab" | "poster" | "live-stream";
 type BannerKind = "general" | "sync";
 
 interface SliderGlobals {
+  SLIDER_APP_VERSION?: string;
   SLIDER_MANIFEST_URL?: string;
   SLIDER_TIME_PER_SLIDE_SECONDS?: number;
   SLIDER_POSTER_TIME_SECONDS?: number;
@@ -146,6 +147,7 @@ const banner = mustGetElement("banner");
 const menuToggle = mustGetElement("menu-toggle") as HTMLButtonElement;
 const menuPanel = mustGetElement("menu-panel");
 const devMenuPanel = mustGetElement("dev-menu-panel");
+const devMenuVersion = mustGetElement("dev-menu-version");
 const announcementsButton = mustGetElement("menu-announcements") as HTMLButtonElement;
 const postersButton = mustGetElement("menu-posters") as HTMLButtonElement;
 const liveStreamMenu = mustGetElement("live-stream-menu");
@@ -231,6 +233,7 @@ start().catch((error: unknown) => {
 async function start(): Promise<void> {
   config = getConfig();
   configurePdfJs();
+  renderDevMenuVersion();
   renderLiveStreamMenu();
   wireControls();
   document.body.classList.toggle("four-mode", config.fourUp && appMode === "announcements");
@@ -273,6 +276,12 @@ async function start(): Promise<void> {
 
     await waitForAdvance(getAutoplayDelaySeconds() * 1000);
   }
+}
+
+function renderDevMenuVersion(): void {
+  const globals = window as Window & SliderGlobals;
+  const version = String(globals.SLIDER_APP_VERSION || "").trim();
+  devMenuVersion.textContent = version ? `Version ${version}` : "Version unknown";
 }
 
 function wireControls(): void {
