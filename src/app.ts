@@ -53,6 +53,20 @@ interface PdfViewport {
   height: number;
 }
 
+interface PdfDocumentLease {
+  documentProxy: PdfDocumentProxy;
+  release(): Promise<void>;
+}
+
+interface PdfDocumentCacheEntry {
+  key: string;
+  promise: Promise<PdfDocumentProxy>;
+  activeUsers: number;
+  evicted: boolean;
+  released: boolean;
+  documentProxy?: PdfDocumentProxy;
+}
+
 interface SlideItem {
   id?: string;
   name: string;
@@ -128,6 +142,10 @@ interface PdfRenderSnapshot {
 interface PdfRenderCacheEntry {
   key: string;
   promise: Promise<PdfRenderSnapshot>;
+  activeUsers: number;
+  evicted: boolean;
+  released: boolean;
+  snapshot?: PdfRenderSnapshot;
 }
 
 interface PdfRenderOptions {
@@ -195,6 +213,7 @@ let activeSlide: HTMLElement | null = null;
 let activeFourSlides: HTMLElement[] = [];
 let activeFourIndices: number[] = [];
 let nextFourSlideIndex = 0;
+let slideRenderToken = 0;
 let activeTransformTarget: HTMLElement | null = null;
 let activeTransform: ViewTransform = getDefaultTransform();
 let transformByTarget = new WeakMap<HTMLElement, ViewTransform>();
@@ -213,7 +232,7 @@ let running = false;
 let config: SliderConfig;
 let pdfWorkerUrl = "";
 let pdfRenderCache = new Map<string, PdfRenderCacheEntry>();
-let pdfDocumentCache = new Map<string, Promise<PdfDocumentProxy>>();
+let pdfDocumentCache = new Map<string, PdfDocumentCacheEntry>();
 let pdfZoomRenderTimer = 0;
 let pdfZoomRenderToken = 0;
 let pdfZoomRenderTarget: HTMLElement | null = null;
@@ -765,6 +784,7 @@ function formatAge(ageSeconds: number): string {
 }
 
 async function showSlide(slide: SlideItem, direction: "next" | "previous" = "next"): Promise<void> {
+  const token = ++slideRenderToken;
   if (appMode === "announcements" || appMode === "posters" || appMode === "poster") {
     stage.querySelectorAll(".lab-view, .cat-stream").forEach((node) => node.remove());
   }
@@ -782,6 +802,11 @@ async function showSlide(slide: SlideItem, direction: "next" | "previous" = "nex
 
   await waitForSlideReady(next);
   await waitForPaint();
+  if (token !== slideRenderToken || !next.isConnected) {
+    next.remove();
+    return;
+  }
+
   const previous = activeSlide;
   previous?.classList.remove("active");
   previous?.classList.toggle("reverse-exit", direction === "previous");
@@ -1538,11 +1563,14 @@ function applyRenderedPdfPage(
     throw new Error("Canvas rendering is not available.");
   }
 
-  configureCanvasScaling(context);
-  context.drawImage(rendered.canvas, 0, 0);
-  canvas.replaceWith(nextCanvas);
-  if (options.releaseSourceCanvas) {
-    releaseCanvas(rendered.canvas);
+  try {
+    configureCanvasScaling(context);
+    context.drawImage(rendered.canvas, 0, 0);
+    canvas.replaceWith(nextCanvas);
+  } finally {
+    if (options.releaseSourceCanvas) {
+      releaseCanvas(rendered.canvas);
+    }
   }
   container.dataset.renderScale = String(outputScale);
   container.dispatchEvent(new Event("pdf-rendered"));
@@ -1583,24 +1611,30 @@ async function getRenderedPdfPage(
     pdfRenderCache.delete(key);
     pdfRenderCache.set(key, cached);
     try {
-      return await materializePdfRenderSnapshot(await cached.promise);
+      return await materializePdfRenderCacheEntry(cached);
     } catch (error: unknown) {
       logCaughtException("cached PDF render materialization failed", error);
-      pdfRenderCache.delete(key);
-      void cached.promise.then(releasePdfRenderSnapshot).catch((releaseError: unknown) => {
-        logCaughtException("cached PDF render release after materialization failure failed", releaseError);
-      });
+      evictPdfRenderCacheEntry(key, cached);
+      const replacement = pdfRenderCache.get(key);
+      if (replacement && replacement !== cached) {
+        return materializePdfRenderCacheEntry(replacement);
+      }
     }
   }
 
   const entry: PdfRenderCacheEntry = {
     key,
     promise: renderPdfPageToCanvasWithScaleFallback(slide, viewportSize, outputScale)
-      .then(snapshotPdfRender)
+      .then(snapshotPdfRender),
+    activeUsers: 0,
+    evicted: false,
+    released: false
   };
   pdfRenderCache.set(key, entry);
   trimPdfRenderCache();
   void entry.promise.then((snapshot) => {
+    entry.snapshot = snapshot;
+    releasePdfRenderCacheEntryIfUnused(entry);
     if (pdfRenderCache.get(key) === entry) {
       logCacheAddition("pdf-render", key, pdfRenderCache.size, getPdfRenderSnapshotDetails(snapshot));
     }
@@ -1611,17 +1645,40 @@ async function getRenderedPdfPage(
       pdfRenderCache.delete(key);
     }
   });
-  const snapshot = await entry.promise;
   try {
-    return materializePdfRenderSnapshot(snapshot);
+    return await materializePdfRenderCacheEntry(entry);
   } catch (error: unknown) {
     logCaughtException("new PDF render cache materialization failed; re-rendering", error);
-    if (pdfRenderCache.get(key) === entry) {
-      pdfRenderCache.delete(key);
-    }
-    releasePdfRenderSnapshot(snapshot);
+    evictPdfRenderCacheEntry(key, entry);
     return renderPdfPageToCanvasWithScaleFallback(slide, viewportSize, outputScale);
   }
+}
+
+async function materializePdfRenderCacheEntry(entry: PdfRenderCacheEntry): Promise<PdfRenderResult> {
+  entry.activeUsers += 1;
+  try {
+    return materializePdfRenderSnapshot(await entry.promise);
+  } finally {
+    entry.activeUsers = Math.max(0, entry.activeUsers - 1);
+    releasePdfRenderCacheEntryIfUnused(entry);
+  }
+}
+
+function evictPdfRenderCacheEntry(key: string, entry: PdfRenderCacheEntry): void {
+  if (pdfRenderCache.get(key) === entry) {
+    pdfRenderCache.delete(key);
+  }
+  entry.evicted = true;
+  releasePdfRenderCacheEntryIfUnused(entry);
+}
+
+function releasePdfRenderCacheEntryIfUnused(entry: PdfRenderCacheEntry): void {
+  if (!entry.evicted || entry.activeUsers > 0 || entry.released || !entry.snapshot) {
+    return;
+  }
+
+  releasePdfRenderSnapshot(entry.snapshot);
+  entry.released = true;
 }
 
 async function renderPdfPageToCanvas(
@@ -1715,7 +1772,8 @@ async function renderPdfPageToCanvasOnce(
     throw new Error("PDF.js is not available.");
   }
 
-  const documentProxy = await getPdfDocument(slide);
+  const documentLease = await getPdfDocumentLease(slide);
+  const { documentProxy } = documentLease;
   try {
     const page = await documentProxy.getPage(1);
     const baseViewport = page.getViewport({ scale: 1 });
@@ -1753,47 +1811,97 @@ async function renderPdfPageToCanvasOnce(
       outputScale
     };
   } finally {
-    await cleanupPdfDocument(documentProxy);
+    await documentLease.release();
   }
 }
 
-function getPdfDocument(slide: SlideItem): Promise<PdfDocumentProxy> {
+async function getPdfDocumentLease(slide: SlideItem): Promise<PdfDocumentLease> {
   if (!config.pdfDocumentCache) {
-    return loadPdfDocument(slide);
+    const documentProxy = await loadPdfDocument(slide);
+    return {
+      documentProxy,
+      release: () => cleanupPdfDocument(documentProxy)
+    };
   }
 
+  return getCachedPdfDocumentLease(slide);
+}
+
+async function getCachedPdfDocumentLease(slide: SlideItem): Promise<PdfDocumentLease> {
   const key = getPdfDocumentCacheKey(slide);
   const cached = pdfDocumentCache.get(key);
   if (cached) {
     pdfDocumentCache.delete(key);
     pdfDocumentCache.set(key, cached);
-    return cached.then(async (documentProxy) => {
-      await cleanupPdfDocument(documentProxy);
-      return documentProxy;
-    });
+    return acquirePdfDocumentCacheEntry(cached);
   }
 
-  const promise = loadPdfDocument(slide).then(async (documentProxy) => {
-    await cleanupPdfDocument(documentProxy);
-    return documentProxy;
-  });
-  pdfDocumentCache.set(key, promise);
+  const entry: PdfDocumentCacheEntry = {
+    key,
+    promise: loadPdfDocument(slide),
+    activeUsers: 0,
+    evicted: false,
+    released: false
+  };
+  pdfDocumentCache.set(key, entry);
   trimPdfDocumentCache();
-  void promise.then((documentProxy) => {
-    if (pdfDocumentCache.get(key) === promise) {
+  void entry.promise.then((documentProxy) => {
+    entry.documentProxy = documentProxy;
+    releasePdfDocumentCacheEntryIfUnused(entry);
+    if (pdfDocumentCache.get(key) === entry) {
       logCacheAddition("pdf-document", key, pdfDocumentCache.size, {
         pages: documentProxy.numPages,
         size: "unknown"
       });
     }
   }).catch((error: unknown) => logCaughtException("pdf document cache addition logging failed", error));
-  promise.catch((error: unknown) => {
-    if (pdfDocumentCache.get(key) === promise) {
+  entry.promise.catch((error: unknown) => {
+    if (pdfDocumentCache.get(key) === entry) {
       logCaughtException("pdf document cache entry failed", error);
       pdfDocumentCache.delete(key);
     }
   });
-  return promise;
+  return acquirePdfDocumentCacheEntry(entry);
+}
+
+async function acquirePdfDocumentCacheEntry(entry: PdfDocumentCacheEntry): Promise<PdfDocumentLease> {
+  entry.activeUsers += 1;
+  let released = false;
+  try {
+    const documentProxy = await entry.promise;
+    return {
+      documentProxy,
+      release: async () => {
+        if (released) {
+          return;
+        }
+        released = true;
+        entry.activeUsers = Math.max(0, entry.activeUsers - 1);
+        releasePdfDocumentCacheEntryIfUnused(entry);
+      }
+    };
+  } catch (error) {
+    entry.activeUsers = Math.max(0, entry.activeUsers - 1);
+    releasePdfDocumentCacheEntryIfUnused(entry);
+    throw error;
+  }
+}
+
+function evictPdfDocumentCacheEntry(key: string, entry: PdfDocumentCacheEntry): void {
+  if (pdfDocumentCache.get(key) === entry) {
+    pdfDocumentCache.delete(key);
+  }
+  entry.evicted = true;
+  releasePdfDocumentCacheEntryIfUnused(entry);
+}
+
+function releasePdfDocumentCacheEntryIfUnused(entry: PdfDocumentCacheEntry): void {
+  if (!entry.evicted || entry.activeUsers > 0 || entry.released || !entry.documentProxy) {
+    return;
+  }
+
+  entry.released = true;
+  void cleanupPdfDocument(entry.documentProxy);
 }
 
 function loadPdfDocument(slide: SlideItem): Promise<PdfDocumentProxy> {
@@ -1809,8 +1917,7 @@ function invalidatePdfDocument(slide: SlideItem): void {
   const key = getPdfDocumentCacheKey(slide);
   const cached = pdfDocumentCache.get(key);
   if (cached) {
-    void cached.then(cleanupPdfDocument).catch((error: unknown) => logCaughtException("pdf document invalidation cleanup failed", error));
-    pdfDocumentCache.delete(key);
+    evictPdfDocumentCacheEntry(key, cached);
   }
   if (config.debug) {
     console.warn("[slider cache] invalidated pdf-document", { key });
@@ -1860,10 +1967,7 @@ function trimPdfRenderCache(): void {
     }
     const cached = pdfRenderCache.get(oldestKey);
     if (cached) {
-      void cached.promise
-        .then(releasePdfRenderSnapshot)
-        .catch((error: unknown) => logCaughtException("pdf render snapshot eviction cleanup failed", error));
-      pdfRenderCache.delete(oldestKey);
+      evictPdfRenderCacheEntry(oldestKey, cached);
       logCacheEvent("evicted pdf-render", { key: oldestKey, entries: pdfRenderCache.size, limit: config.pdfCacheSize });
     }
   }
@@ -1871,10 +1975,8 @@ function trimPdfRenderCache(): void {
 
 function clearPdfRenderCache(): void {
   const entries = pdfRenderCache.size;
-  pdfRenderCache.forEach((cached) => {
-    void cached.promise
-      .then(releasePdfRenderSnapshot)
-      .catch((error: unknown) => logCaughtException("pdf render snapshot cache clear cleanup failed", error));
+  pdfRenderCache.forEach((cached, key) => {
+    evictPdfRenderCacheEntry(key, cached);
   });
   pdfRenderCache.clear();
   if (entries > 0) {
@@ -1898,10 +2000,7 @@ function trimPdfDocumentCache(): void {
     }
     const cached = pdfDocumentCache.get(oldestKey);
     if (cached) {
-      void cached
-        .then(cleanupPdfDocument)
-        .catch((error: unknown) => logCaughtException("pdf document eviction cleanup failed", error));
-      pdfDocumentCache.delete(oldestKey);
+      evictPdfDocumentCacheEntry(oldestKey, cached);
       logCacheEvent("evicted pdf-document", { key: oldestKey, entries: pdfDocumentCache.size, limit: config.pdfCacheSize });
     }
   }
@@ -1909,10 +2008,8 @@ function trimPdfDocumentCache(): void {
 
 function clearPdfDocumentCache(): void {
   const entries = pdfDocumentCache.size;
-  pdfDocumentCache.forEach((cached) => {
-    void cached
-      .then(cleanupPdfDocument)
-      .catch((error: unknown) => logCaughtException("pdf document cache clear cleanup failed", error));
+  pdfDocumentCache.forEach((cached, key) => {
+    evictPdfDocumentCacheEntry(key, cached);
   });
   pdfDocumentCache.clear();
   if (entries > 0) {
@@ -2054,7 +2151,8 @@ function cancelScheduledPdfPrefetch(): void {
 }
 
 async function prefetchPdf(slide: SlideItem): Promise<void> {
-  await getPdfDocument(slide);
+  const lease = await getCachedPdfDocumentLease(slide);
+  await lease.release();
   if (!config.pdfRenderCache) {
     return;
   }
@@ -2286,6 +2384,9 @@ function showControls(): void {
 }
 
 function setAppMode(mode: AppMode): void {
+  if (appMode !== mode) {
+    slideRenderToken += 1;
+  }
   appMode = mode;
   document.body.classList.toggle("lab-mode", mode === "lab");
   document.body.classList.toggle("live-stream-mode", mode === "live-stream");
