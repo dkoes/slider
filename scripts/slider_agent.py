@@ -376,6 +376,23 @@ def launch_windows_chrome_kiosk(config: AgentConfig) -> None:
         print(f"Chrome kiosk launch failed: {error}", file=sys.stderr)
 
 
+def close_windows_chrome() -> None:
+    if sys.platform != "win32":
+        return
+
+    subprocess.run(
+        ["taskkill", "/F", "/T", "/IM", "chrome.exe"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+
+
+def quit_agent() -> None:
+    close_windows_chrome()
+    os._exit(0)
+
+
 def find_windows_chrome_path(configured_path: str) -> str:
     candidates = []
     if configured_path:
@@ -1123,6 +1140,11 @@ def make_handler(config: AgentConfig, syncer: SharePointSyncer) -> type[SimpleHT
                         self.send_json(500, {"status": "error", "message": message})
                 except Exception as error:  # noqa: BLE001 - surface unexpected manual sync failures.
                     self.send_json(500, {"status": "error", "message": str(error)})
+                return
+
+            if clean_path == "quit":
+                self.send_json(200, {"status": "ok", "message": "Slider is quitting."})
+                threading.Timer(0.5, quit_agent).start()
                 return
 
             self.send_error(404, "Not found")

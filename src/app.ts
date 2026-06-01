@@ -154,6 +154,7 @@ const fullscreenButton = mustGetElement("menu-fullscreen") as HTMLButtonElement;
 const updateButton = mustGetElement("menu-update") as HTMLButtonElement;
 const manualSyncButton = mustGetElement("menu-manual-sync") as HTMLButtonElement;
 const clearCachesButton = mustGetElement("menu-clear-caches") as HTMLButtonElement;
+const quitButton = mustGetElement("menu-quit") as HTMLButtonElement;
 const labsMenu = mustGetElement("labs-menu");
 const previousButton = mustGetElement("previous-slide") as HTMLButtonElement;
 const nextButton = mustGetElement("next-slide") as HTMLButtonElement;
@@ -321,6 +322,9 @@ function wireControls(): void {
   clearCachesButton.addEventListener("click", () => {
     void clearCaches();
   });
+  quitButton.addEventListener("click", () => {
+    void quitSlider();
+  });
   banner.addEventListener("click", (event) => {
     event.stopPropagation();
     hideBanner();
@@ -434,6 +438,25 @@ async function clearCaches(): Promise<void> {
     showBanner(`Unable to clear caches: ${getErrorMessage(error)}`);
   } finally {
     clearCachesButton.disabled = false;
+  }
+}
+
+async function quitSlider(): Promise<void> {
+  setDevMenuOpen(false);
+  quitButton.disabled = true;
+  showBanner("Quitting slider...");
+  try {
+    const response = await fetch("/quit", { method: "POST", cache: "no-store" });
+    const payload = await response.json() as { message?: string; status?: string };
+    if (!response.ok) {
+      throw new Error(payload.message || `Quit failed (${response.status}).`);
+    }
+
+    running = false;
+    showBanner(payload.message || "Slider is quitting.");
+  } catch (error: unknown) {
+    quitButton.disabled = false;
+    showBanner(`Quit failed: ${getErrorMessage(error)}`);
   }
 }
 
