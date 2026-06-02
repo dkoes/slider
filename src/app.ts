@@ -2678,7 +2678,6 @@ function collectLabPosters(folders: LabFolder[]): SlideItem[] {
   const items: SlideItem[] = [];
   for (const folder of folders) {
     items.push(...(folder.items || []).filter(isSlideItem));
-    items.push(...collectLabPosters((folder.children || []).filter(isLabFolder)));
   }
   return items;
 }
