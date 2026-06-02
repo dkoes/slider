@@ -393,6 +393,7 @@ def launch_windows_chrome_kiosk(config: AgentConfig) -> None:
 
     url = get_slider_url(config, kiosk=True)
     try:
+        close_windows_chrome()
         subprocess.Popen(
             [
                 chrome_path,
@@ -645,6 +646,8 @@ move /Y "%CURRENT%" "%OLD%" >> "%LOG%" 2>>&1
 if errorlevel 1 goto rollback
 move /Y "%NEW%" "%CURRENT%" >> "%LOG%" 2>>&1
 if errorlevel 1 goto rollback
+echo [%date% %time%] Closing Chrome before starting updated slider. >> "%LOG%"
+call :close_chrome
 echo [%date% %time%] Starting updated slider. >> "%LOG%"
 call :write_launcher
 start "Slider Agent" /D "%APPDIR%" "%LAUNCHER%"
@@ -679,7 +682,7 @@ exit /b 1
 >> "%LAUNCHER%" echo set "SLIDER_EXIT_CODE=%%ERRORLEVEL%%"
 >> "%LAUNCHER%" echo echo Slider agent exited with code %%SLIDER_EXIT_CODE%%.
 >> "%LAUNCHER%" echo echo [%%date%% %%time%%] Slider exited with code %%SLIDER_EXIT_CODE%%. ^>^> "%APPLOG%"
->> "%LAUNCHER%" echo exit /b %%SLIDER_EXIT_CODE%%
+>> "%LAUNCHER%" echo exit %%SLIDER_EXIT_CODE%%
 exit /b 0
 :close_launcher_windows
 taskkill /F /FI "WINDOWTITLE eq Slider Agent" /IM cmd.exe >> "%LOG%" 2>>&1
