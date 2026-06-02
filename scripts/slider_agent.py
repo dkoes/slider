@@ -618,7 +618,7 @@ set /a WAIT_SECONDS=0
 :wait
 tasklist /FI "PID eq %PID%" /NH | findstr /R /C:"^.* %PID% " >nul
 if not errorlevel 1 (
-  if !WAIT_SECONDS! GEQ 20 goto force_exit
+  if !WAIT_SECONDS! GEQ 5 goto force_exit
   timeout /t 1 /nobreak >nul
   set /a WAIT_SECONDS+=1
   goto wait
@@ -627,6 +627,8 @@ goto replace
 :force_exit
 echo [%date% %time%] Slider PID %PID% did not exit; terminating it. >> "%LOG%"
 taskkill /F /PID %PID% >> "%LOG%" 2>>&1
+echo [%date% %time%] Ensuring "%APPNAME%" is not still running. >> "%LOG%"
+taskkill /F /IM "%APPNAME%" >> "%LOG%" 2>>&1
 timeout /t 1 /nobreak >nul
 goto replace
 :wait_by_name
@@ -675,15 +677,26 @@ exit /b 1
 >> "%LAUNCHER%" echo echo [%%date%% %%time%%] Slider exited with code %%ERRORLEVEL%%. ^>^> "%APPLOG%"
 exit /b 0
 :close_chrome
-echo [%date% %time%] Closing Chrome with PowerShell Stop-Process. >> "%LOG%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-Process chrome -ErrorAction SilentlyContinue; if ($p) {{ $p | ForEach-Object {{ Write-Output ('Terminating Chrome PID ' + $_.Id + '.'); Stop-Process -Id $_.Id -Force }} }} else {{ Write-Output 'Chrome is not running.' }}" >> "%LOG%" 2>>&1
+set /a CHROME_ATTEMPT=0
+:close_chrome_loop
+set /a CHROME_ATTEMPT+=1
+tasklist /FI "IMAGENAME eq chrome.exe" /NH | findstr /I /C:"chrome.exe" >nul
+if errorlevel 1 (
+  echo [%date% %time%] Chrome is not running. >> "%LOG%"
+  exit /b 0
+)
+echo [%date% %time%] Terminating Chrome attempt !CHROME_ATTEMPT!. >> "%LOG%"
+taskkill /F /IM chrome.exe >> "%LOG%" 2>>&1
 timeout /t 1 /nobreak >nul
 tasklist /FI "IMAGENAME eq chrome.exe" /NH | findstr /I /C:"chrome.exe" >nul
 if errorlevel 1 (
   echo [%date% %time%] Chrome is closed. >> "%LOG%"
-) else (
-  echo [%date% %time%] WARNING: Chrome still appears to be running. >> "%LOG%"
+  exit /b 0
 )
+if !CHROME_ATTEMPT! LSS 5 (
+  goto close_chrome_loop
+)
+echo [%date% %time%] WARNING: Chrome still appears to be running. >> "%LOG%"
 exit /b 0
 """
     helper.write_text(script, encoding="utf-8")
