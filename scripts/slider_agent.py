@@ -599,6 +599,7 @@ def write_update_helper(current_exe: Path, new_exe: Path) -> Path:
     log_path = current_exe.with_suffix(".update.log")
     relaunch_log_path = current_exe.with_suffix(".log")
     launch_helper = current_exe.with_suffix(".launch.cmd")
+    current_exe_name = current_exe.name
     script = f"""@echo off
 setlocal EnableExtensions EnableDelayedExpansion
 set "PID=%~1"
@@ -608,8 +609,10 @@ set "OLD={old_exe}"
 set "LOG={log_path}"
 set "APPLOG={relaunch_log_path}"
 set "APPDIR={current_exe.parent}"
+set "APPNAME={current_exe_name}"
 set "LAUNCHER={launch_helper}"
 echo [%date% %time%] Update helper started for slider PID %PID%. > "%LOG%"
+if "%PID%"=="" goto wait_by_name
 echo [%date% %time%] Waiting for slider PID %PID% to exit. >> "%LOG%"
 set /a WAIT_SECONDS=0
 :wait
@@ -624,6 +627,11 @@ goto replace
 :force_exit
 echo [%date% %time%] Slider PID %PID% did not exit; terminating it. >> "%LOG%"
 taskkill /F /PID %PID% >> "%LOG%" 2>>&1
+timeout /t 1 /nobreak >nul
+goto replace
+:wait_by_name
+echo [%date% %time%] No slider PID was provided; terminating "%APPNAME%" if it is still running. >> "%LOG%"
+taskkill /F /IM "%APPNAME%" >> "%LOG%" 2>>&1
 timeout /t 1 /nobreak >nul
 :replace
 echo [%date% %time%] Closing Chrome before replacement. >> "%LOG%"
@@ -667,34 +675,12 @@ exit /b 1
 >> "%LAUNCHER%" echo echo [%%date%% %%time%%] Slider exited with code %%ERRORLEVEL%%. ^>^> "%APPLOG%"
 exit /b 0
 :close_chrome
-tasklist /FI "IMAGENAME eq chrome.exe" /NH | findstr /I /C:"chrome.exe" >nul
-if errorlevel 1 (
-  echo [%date% %time%] Chrome is not running. >> "%LOG%"
-  exit /b 0
-)
-set /a CHROME_ATTEMPT=0
-:close_chrome_loop
-set /a CHROME_ATTEMPT+=1
-for /f "tokens=2 delims=," %%P in ('tasklist /FI "IMAGENAME eq chrome.exe" /FO CSV /NH ^| findstr /I /C:"chrome.exe"') do (
-  set "CHROME_PID=%%~P"
-  echo [%date% %time%] Terminating Chrome PID !CHROME_PID!. >> "%LOG%"
-  taskkill /F /PID !CHROME_PID! >> "%LOG%" 2>>&1
-)
-tasklist /FI "IMAGENAME eq chrome.exe" /NH | findstr /I /C:"chrome.exe" >nul
-if errorlevel 1 (
-  echo [%date% %time%] Chrome closed after !CHROME_ATTEMPT! attempt(s). >> "%LOG%"
-  exit /b 0
-)
-if !CHROME_ATTEMPT! LSS 10 (
-  timeout /t 1 /nobreak >nul
-  goto close_chrome_loop
-)
-echo [%date% %time%] Chrome still running after taskkill attempts; trying PowerShell Stop-Process. >> "%LOG%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force" >> "%LOG%" 2>>&1
+echo [%date% %time%] Closing Chrome with PowerShell Stop-Process. >> "%LOG%"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-Process chrome -ErrorAction SilentlyContinue; if ($p) {{ $p | ForEach-Object {{ Write-Output ('Terminating Chrome PID ' + $_.Id + '.'); Stop-Process -Id $_.Id -Force }} }} else {{ Write-Output 'Chrome is not running.' }}" >> "%LOG%" 2>>&1
 timeout /t 1 /nobreak >nul
 tasklist /FI "IMAGENAME eq chrome.exe" /NH | findstr /I /C:"chrome.exe" >nul
 if errorlevel 1 (
-  echo [%date% %time%] Chrome closed after PowerShell fallback. >> "%LOG%"
+  echo [%date% %time%] Chrome is closed. >> "%LOG%"
 ) else (
   echo [%date% %time%] WARNING: Chrome still appears to be running. >> "%LOG%"
 )
