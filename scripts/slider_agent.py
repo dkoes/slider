@@ -636,6 +636,8 @@ echo [%date% %time%] No slider PID was provided; terminating "%APPNAME%" if it i
 taskkill /F /IM "%APPNAME%" >> "%LOG%" 2>>&1
 timeout /t 1 /nobreak >nul
 :replace
+echo [%date% %time%] Closing launcher command windows before replacement. >> "%LOG%"
+call :close_launcher_windows
 echo [%date% %time%] Closing Chrome before replacement. >> "%LOG%"
 call :close_chrome
 echo [%date% %time%] Replacing executable. >> "%LOG%"
@@ -662,6 +664,7 @@ if exist "%CURRENT%" (
 exit /b 1
 :write_launcher
 > "%LAUNCHER%" echo @echo off
+>> "%LAUNCHER%" echo title Slider Agent
 >> "%LAUNCHER%" echo cd /d "%APPDIR%"
 >> "%LAUNCHER%" echo set "PYINSTALLER_RESET_ENVIRONMENT=1"
 >> "%LAUNCHER%" echo set "_PYI_APPLICATION_HOME_DIR="
@@ -675,6 +678,10 @@ exit /b 1
 >> "%LAUNCHER%" echo "%CURRENT%" ^>^> "%APPLOG%" 2^>^>^&1
 >> "%LAUNCHER%" echo echo Slider agent exited with code %%ERRORLEVEL%%.
 >> "%LAUNCHER%" echo echo [%%date%% %%time%%] Slider exited with code %%ERRORLEVEL%%. ^>^> "%APPLOG%"
+exit /b 0
+:close_launcher_windows
+taskkill /F /FI "WINDOWTITLE eq Slider Agent" /IM cmd.exe >> "%LOG%" 2>>&1
+taskkill /F /FI "WINDOWTITLE eq Slider" /IM cmd.exe >> "%LOG%" 2>>&1
 exit /b 0
 :close_chrome
 set /a CHROME_ATTEMPT=0
