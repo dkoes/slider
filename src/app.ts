@@ -2365,7 +2365,6 @@ function setAppMode(mode: AppMode): void {
   document.body.classList.toggle("lab-mode", mode === "lab");
   document.body.classList.toggle("live-stream-mode", mode === "live-stream");
   document.body.classList.toggle("four-mode", config.fourUp && mode === "announcements");
-  document.body.classList.toggle("poster-display-mode", mode === "posters" || mode === "poster");
   document.body.classList.toggle(
     "poster-controls-always-visible",
     config.posterSlidesControlsAlwaysVisible && isPosterDisplayMode()
