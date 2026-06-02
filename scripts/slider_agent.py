@@ -416,7 +416,7 @@ def close_windows_chrome() -> None:
     print("Closing Chrome processes.", flush=True)
     for attempt in range(1, 11):
         subprocess.run(
-            ["taskkill", "/F", "/T", "/IM", "chrome.exe"],
+            ["taskkill", "/F", "/IM", "chrome.exe"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
@@ -587,6 +587,8 @@ def sha256_file(path: Path) -> str:
 def remove_mark_of_the_web(path: Path) -> None:
     try:
         os.remove(str(path) + ":Zone.Identifier")
+    except FileNotFoundError:
+        return
     except OSError as error:
         log_exception(f"Unable to remove mark-of-the-web from {path}", error)
 
@@ -608,8 +610,6 @@ set "APPLOG={relaunch_log_path}"
 set "APPDIR={current_exe.parent}"
 set "LAUNCHER={launch_helper}"
 echo [%date% %time%] Update helper started for slider PID %PID%. > "%LOG%"
-echo [%date% %time%] Closing Chrome before replacement. >> "%LOG%"
-call :close_chrome
 echo [%date% %time%] Waiting for slider PID %PID% to exit. >> "%LOG%"
 set /a WAIT_SECONDS=0
 :wait
@@ -626,7 +626,7 @@ echo [%date% %time%] Slider PID %PID% did not exit; terminating it. >> "%LOG%"
 taskkill /F /PID %PID% >> "%LOG%" 2>>&1
 timeout /t 1 /nobreak >nul
 :replace
-echo [%date% %time%] Closing Chrome before launch. >> "%LOG%"
+echo [%date% %time%] Closing Chrome before replacement. >> "%LOG%"
 call :close_chrome
 echo [%date% %time%] Replacing executable. >> "%LOG%"
 move /Y "%CURRENT%" "%OLD%" >> "%LOG%" 2>>&1
@@ -658,8 +658,12 @@ exit /b 1
 >> "%LAUNCHER%" echo set "_PYI_ARCHIVE_FILE="
 >> "%LAUNCHER%" echo set "_PYI_PARENT_PROCESS_LEVEL="
 >> "%LAUNCHER%" echo set "_PYI_SPLASH_IPC="
+>> "%LAUNCHER%" echo echo Starting Slider agent...
+>> "%LAUNCHER%" echo echo Executable: "%CURRENT%"
+>> "%LAUNCHER%" echo echo Log file: "%APPLOG%"
 >> "%LAUNCHER%" echo echo [%%date%% %%time%%] Launching "%CURRENT%". ^>^> "%APPLOG%"
 >> "%LAUNCHER%" echo "%CURRENT%" ^>^> "%APPLOG%" 2^>^>^&1
+>> "%LAUNCHER%" echo echo Slider agent exited with code %%ERRORLEVEL%%.
 >> "%LAUNCHER%" echo echo [%%date%% %%time%%] Slider exited with code %%ERRORLEVEL%%. ^>^> "%APPLOG%"
 exit /b 0
 :close_chrome
@@ -671,7 +675,11 @@ if errorlevel 1 (
 set /a CHROME_ATTEMPT=0
 :close_chrome_loop
 set /a CHROME_ATTEMPT+=1
-taskkill /F /T /IM chrome.exe >> "%LOG%" 2>>&1
+for /f "tokens=2 delims=," %%P in ('tasklist /FI "IMAGENAME eq chrome.exe" /FO CSV /NH ^| findstr /I /C:"chrome.exe"') do (
+  set "CHROME_PID=%%~P"
+  echo [%date% %time%] Terminating Chrome PID !CHROME_PID!. >> "%LOG%"
+  taskkill /F /PID !CHROME_PID! >> "%LOG%" 2>>&1
+)
 tasklist /FI "IMAGENAME eq chrome.exe" /NH | findstr /I /C:"chrome.exe" >nul
 if errorlevel 1 (
   echo [%date% %time%] Chrome closed after !CHROME_ATTEMPT! attempt(s). >> "%LOG%"
