@@ -674,7 +674,7 @@ exit /b 1
 >> "%LAUNCHER%" echo set "_PYI_ARCHIVE_FILE="
 >> "%LAUNCHER%" echo set "_PYI_PARENT_PROCESS_LEVEL="
 >> "%LAUNCHER%" echo set "_PYI_SPLASH_IPC="
->> "%LAUNCHER%" echo echo Starting Slider agent...
+>> "%LAUNCHER%" echo echo Starting Slider agent (will take a few minutes)...
 >> "%LAUNCHER%" echo echo Executable: "%CURRENT%"
 >> "%LAUNCHER%" echo echo Log file: "%APPLOG%"
 >> "%LAUNCHER%" echo echo [%%date%% %%time%%] Launching "%CURRENT%". ^>^> "%APPLOG%"

@@ -209,6 +209,7 @@ let activeSlide: HTMLElement | null = null;
 let activeFourSlides: HTMLElement[] = [];
 let activeFourIndices: number[] = [];
 let nextFourSlideIndex = 0;
+let fourUpCycleWrapped = false;
 let slideRenderToken = 0;
 let activeTransformTarget: HTMLElement | null = null;
 let activeTransform: ViewTransform = getDefaultTransform();
@@ -676,9 +677,9 @@ async function refreshSlides(config: SliderConfig): Promise<void> {
   try {
     const manifest = await fetchManifest(config.manifestUrl);
     const nextSlides = (manifest.slides || []).filter(isSlideItem);
+    const slidesChanged = getSlideListSignature(slides) !== getSlideListSignature(nextSlides);
     labs = (manifest.labs || []).filter(isLabFolder);
     renderMenu();
-    const slideCountChanged = slides.length !== nextSlides.length;
     slides = nextSlides;
     slideIndex = normalizeSlideIndex(slideIndex, slides.length);
 
@@ -690,14 +691,21 @@ async function refreshSlides(config: SliderConfig): Promise<void> {
     }
 
     // Four-up mode holds live DOM nodes for each quadrant; rebuild them when the
-    // manifest changes so stale indices do not point at removed slides.
-    if (config.fourUp && slideCountChanged) {
+    // manifest changes so stale indices do not point at removed or updated slides.
+    if (config.fourUp && slidesChanged) {
       activeFourSlides.forEach((node) => node.remove());
       activeFourSlides = [];
       activeFourIndices = [];
       nextFourSlideIndex = 0;
+      fourUpCycleWrapped = false;
+      if (appMode === "announcements" && slides.length > 0) {
+        initializeFourSlides();
+      }
     }
     updateSyncBanner(manifest, config);
+    if (appMode === "announcements" && config.fourUp) {
+      fourUpCycleWrapped = false;
+    }
 
     if ((appMode === "announcements" || appMode === "posters") && getAutoplayItems().length === 0) {
       showStaticMessage(getEmptyAutoplayMessage());
@@ -732,6 +740,10 @@ function getAutoplayItems(): SlideItem[] {
 }
 
 function isAutoplayPassComplete(): boolean {
+  if (appMode === "announcements" && config.fourUp) {
+    return fourUpCycleWrapped;
+  }
+
   return appMode === "posters"
     ? posterSlideshowIndex === posterSlideshowItems.length - 1
     : slideIndex === slides.length - 1;
@@ -1012,8 +1024,16 @@ function showAnnouncements(): void {
   activeSlide?.remove();
   activeSlide = null;
   if (slides.length > 0) {
-    slideIndex = (normalizeSlideIndex(slideIndex, slides.length) + 1) % slides.length;
-    void showSlide(slides[slideIndex]);
+    if (config.fourUp) {
+      nextFourSlideIndex = 0;
+      fourUpCycleWrapped = false;
+      initializeFourSlides();
+    } else {
+      slideIndex = (normalizeSlideIndex(slideIndex, slides.length) + 1) % slides.length;
+      void showSlide(slides[slideIndex]);
+    }
+  } else {
+    showStaticMessage(getEmptyAutoplayMessage());
   }
 }
 
@@ -1290,6 +1310,9 @@ async function advanceFourSlides(): Promise<void> {
 }
 
 function initializeFourSlides(): void {
+  activeSlide?.remove();
+  activeSlide = null;
+  clearStaticMessage();
   activeFourSlides.forEach((node) => node.remove());
   activeFourSlides = [];
   activeFourIndices = [];
@@ -1333,6 +1356,9 @@ function getNextFourSlideIndex(): number {
   for (let attempt = 0; attempt < slides.length; attempt += 1) {
     const index = nextFourSlideIndex;
     nextFourSlideIndex = (nextFourSlideIndex + 1) % slides.length;
+    if (nextFourSlideIndex === 0) {
+      fourUpCycleWrapped = true;
+    }
     if (index !== welcomeIndex && !activeIndices.has(index)) {
       return index;
     }
@@ -1342,6 +1368,9 @@ function getNextFourSlideIndex(): number {
     const index = (fallbackStart + attempt) % slides.length;
     if (index !== welcomeIndex) {
       nextFourSlideIndex = (index + 1) % slides.length;
+      if (nextFourSlideIndex === 0) {
+        fourUpCycleWrapped = true;
+      }
       return index;
     }
   }
@@ -2336,6 +2365,7 @@ function setAppMode(mode: AppMode): void {
   document.body.classList.toggle("lab-mode", mode === "lab");
   document.body.classList.toggle("live-stream-mode", mode === "live-stream");
   document.body.classList.toggle("four-mode", config.fourUp && mode === "announcements");
+  document.body.classList.toggle("poster-display-mode", mode === "posters" || mode === "poster");
   document.body.classList.toggle(
     "poster-controls-always-visible",
     config.posterSlidesControlsAlwaysVisible && isPosterDisplayMode()
@@ -2637,6 +2667,12 @@ function isSlideItem(value: unknown): value is SlideItem {
 function isLabFolder(value: unknown): value is LabFolder {
   const lab = value as Partial<LabFolder>;
   return Boolean(lab.name && lab.path);
+}
+
+function getSlideListSignature(items: SlideItem[]): string {
+  return items
+    .map((item) => [item.id || "", item.name, item.kind, item.url, item.modified || ""].join("\u001f"))
+    .join("\u001e");
 }
 
 function collectLabPosters(folders: LabFolder[]): SlideItem[] {
