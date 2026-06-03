@@ -751,6 +751,7 @@ class SharePointSyncer:
         self.config = config
         self.lock = threading.Lock()
         self.opener = build_opener()
+        self.synced_files: set[Path] = set()
 
     def sync_once(self) -> None:
         with self.lock:
@@ -758,6 +759,7 @@ class SharePointSyncer:
             try:
                 # Keep sync atomic from the browser's perspective: download files,
                 # prune old files, then replace the manifest in one filesystem move.
+                self.synced_files = set()
                 content = self.fetch_content()
                 slides = content["slides"]
                 labs = content["labs"]
@@ -902,17 +904,19 @@ class SharePointSyncer:
         extension = Path(name).suffix.lower()
         kind = SUPPORTED_EXTENSIONS.get(extension)
         download_url = child.get("@content.downloadUrl") or child.get("@microsoft.graph.downloadUrl")
-        if not name or not kind or not isinstance(download_url, str):
+        if not name or not isinstance(download_url, str):
             return None
 
         # Reuse unchanged local files so routine syncs are cheap and the display
         # keeps working even when only manifest refreshes are happening.
         local_name = unique_name(safe_filename(name), used_names)
         local_path = directory / local_name
+        self.synced_files.add(local_path)
         modified = str(child.get("lastModifiedDateTime") or child.get("cTag") or child.get("eTag") or "")
         existing = find_existing_slide(self.config.manifest_path, str(child.get("id") or name))
         if (
-            existing
+            kind
+            and existing
             and existing.get("modified") == modified
             and isinstance(existing.get("url"), str)
             and (self.config.data_dir / existing["url"].lstrip("/")).exists()
@@ -926,6 +930,9 @@ class SharePointSyncer:
             }
 
         download_atomic(self.opener, download_url, local_path)
+        if not kind:
+            return None
+
         return {
             "id": str(child.get("id") or name),
             "name": name,
@@ -937,7 +944,8 @@ class SharePointSyncer:
     def remove_unlisted_files(self, slides: list[dict[str, str]], labs: list[dict[str, Any]]) -> None:
         # Manifest URLs are percent-encoded, but local filesystem paths are not.
         # Decode before comparing or files with spaces will be pruned incorrectly.
-        wanted = {self.local_path_from_url(slide["url"]) for slide in slides}
+        wanted = set(self.synced_files)
+        wanted.update(self.local_path_from_url(slide["url"]) for slide in slides)
         wanted.update(self.local_path_from_url(url) for url in collect_lab_urls(labs))
         for root in (self.config.slides_dir, self.config.labs_dir):
             if not root.exists():
