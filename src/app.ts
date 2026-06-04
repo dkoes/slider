@@ -1430,7 +1430,9 @@ function createSlideContent(slide: SlideItem): HTMLElement {
     image.src = slide.url;
     image.alt = slide.name;
     image.decoding = "async";
-    image.addEventListener("error", () => showBanner(`Unable to display ${slide.name}.`));
+    image.addEventListener("error", () => {
+      void handleSlideDisplayFailure(slide);
+    });
     return image;
   }
 
@@ -1501,14 +1503,17 @@ function createPdfContent(slide: SlideItem): HTMLElement {
   const canvas = document.createElement("canvas");
   container.append(canvas);
 
-  renderPdfPage(slide, container).catch((error: unknown) => {
+  renderPdfPage(slide, container).catch(async (error: unknown) => {
     logCaughtException(`render PDF failed for ${slide.name}`, error);
     if (!container.isConnected) {
       return;
     }
 
+    if (await handleSlideDisplayFailure(slide, getErrorMessage(error))) {
+      return;
+    }
+
     container.textContent = `Unable to display ${slide.name}.`;
-    showBanner(`Unable to display ${slide.name}: ${getErrorMessage(error)}`);
   });
 
   return container;
@@ -2674,6 +2679,66 @@ function isLabFolder(value: unknown): value is LabFolder {
 
   const lab = value as Partial<LabFolder>;
   return Boolean(lab.name && lab.path);
+}
+
+async function handleSlideDisplayFailure(slide: SlideItem, detail = ""): Promise<boolean> {
+  await refreshSlides(config);
+  if (!isSlideStillListed(slide)) {
+    hideBanner("general");
+    if (appMode === "announcements" && config.fourUp) {
+      return true;
+    }
+
+    advanceAfterRemovedSlide();
+    return true;
+  }
+
+  const suffix = detail ? `: ${detail}` : "";
+  showBanner(`Unable to display ${slide.name}${suffix}.`);
+  return false;
+}
+
+function advanceAfterRemovedSlide(): void {
+  const autoplayItems = getAutoplayItems();
+  if ((appMode === "announcements" || appMode === "posters") && autoplayItems.length > 0) {
+    if (appMode === "posters") {
+      posterSlideshowIndex = (posterSlideshowIndex + 1) % posterSlideshowItems.length;
+      void showSlide(posterSlideshowItems[posterSlideshowIndex]);
+      return;
+    }
+
+    slideIndex = (slideIndex + 1) % slides.length;
+    void showSlide(slides[slideIndex]);
+  }
+}
+
+function isSlideStillListed(slide: SlideItem): boolean {
+  return getCurrentManifestItems().some((item) => isSameSlideItem(item, slide));
+}
+
+function getCurrentManifestItems(): SlideItem[] {
+  const items = [...slides, ...collectLabPosters(labs)];
+  for (const lab of labs) {
+    collectLabIndexes(lab, items);
+  }
+  return items;
+}
+
+function collectLabIndexes(lab: LabFolder, items: SlideItem[]): void {
+  if (isSlideItem(lab.index)) {
+    items.push(lab.index);
+  }
+  for (const child of lab.children || []) {
+    collectLabIndexes(child, items);
+  }
+}
+
+function isSameSlideItem(left: SlideItem, right: SlideItem): boolean {
+  if (left.id && right.id) {
+    return left.id === right.id;
+  }
+
+  return left.url === right.url && left.name === right.name && left.kind === right.kind;
 }
 
 function getManifestSlides(manifest: SlideManifest): SlideItem[] {
