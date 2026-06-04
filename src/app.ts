@@ -1053,8 +1053,9 @@ function showPosters(): void {
   activeSlide?.remove();
   activeSlide = null;
 
-  // Entering Posters starts a fresh randomized pass through every non-index file
-  // under Labs; later passes refresh the manifest first and reshuffle again.
+  // Entering Posters starts a fresh randomized pass through non-index files in
+  // each immediate Labs/* folder; later passes refresh the manifest first and
+  // reshuffle again.
   posterSlideshowItems = shuffleSlides(collectLabPosters(labs));
   posterSlideshowIndex = -1;
   if (posterSlideshowItems.length > 0) {
@@ -2780,7 +2781,6 @@ function collectLabPosters(folders: LabFolder[]): SlideItem[] {
   const items: SlideItem[] = [];
   for (const folder of folders) {
     items.push(...(folder.items || []).filter(isSlideItem));
-    items.push(...collectLabPosters(folder.children || []));
   }
   return items;
 }
