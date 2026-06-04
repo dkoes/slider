@@ -79,7 +79,7 @@ interface LabFolder {
   id?: string;
   name: string;
   path: string;
-  index?: SlideItem;
+  index?: SlideItem | null;
   items?: SlideItem[];
   children?: LabFolder[];
 }
@@ -2655,6 +2655,10 @@ function cacheBustedUrl(url: string): string {
 }
 
 function isSlideItem(value: unknown): value is SlideItem {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
   const slide = value as Partial<SlideItem>;
   return Boolean(
     slide.name &&
@@ -2664,6 +2668,10 @@ function isSlideItem(value: unknown): value is SlideItem {
 }
 
 function isLabFolder(value: unknown): value is LabFolder {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
   const lab = value as Partial<LabFolder>;
   return Boolean(lab.name && lab.path);
 }
