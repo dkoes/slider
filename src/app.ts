@@ -650,10 +650,24 @@ function firstDefined(...values: unknown[]): unknown {
 
 function resolveFourUp(value: unknown): boolean {
   if (String(value).trim().toLowerCase() === "auto") {
-    return window.innerWidth >= 3840 && window.innerHeight >= 2160;
+    const size = getAutoFourUpSize();
+    return size.width >= 3840 && size.height >= 2160;
   }
 
   return parseBooleanParam(value == null ? null : String(value), false);
+}
+
+function getAutoFourUpSize(): { width: number; height: number } {
+  const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
+  const viewportWidth = window.innerWidth * pixelRatio;
+  const viewportHeight = window.innerHeight * pixelRatio;
+  const screenWidth = window.screen?.width ? window.screen.width * pixelRatio : 0;
+  const screenHeight = window.screen?.height ? window.screen.height * pixelRatio : 0;
+
+  return {
+    width: Math.max(viewportWidth, screenWidth),
+    height: Math.max(viewportHeight, screenHeight)
+  };
 }
 
 function configurePdfJs(): void {
