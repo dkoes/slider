@@ -676,9 +676,9 @@ function getPdfJsLib(): PdfJsGlobal | undefined {
 async function refreshSlides(config: SliderConfig): Promise<void> {
   try {
     const manifest = await fetchManifest(config.manifestUrl);
-    const nextSlides = (manifest.slides || []).filter(isSlideItem);
+    const nextSlides = getManifestSlides(manifest);
     const slidesChanged = getSlideListSignature(slides) !== getSlideListSignature(nextSlides);
-    labs = (manifest.labs || []).filter(isLabFolder);
+    labs = getManifestLabs(manifest);
     renderMenu();
     slides = nextSlides;
     slideIndex = normalizeSlideIndex(slideIndex, slides.length);
@@ -2676,6 +2676,34 @@ function isLabFolder(value: unknown): value is LabFolder {
   return Boolean(lab.name && lab.path);
 }
 
+function getManifestSlides(manifest: SlideManifest): SlideItem[] {
+  return Array.isArray(manifest.slides) ? manifest.slides.filter(isSlideItem) : [];
+}
+
+function getManifestLabs(manifest: SlideManifest): LabFolder[] {
+  return Array.isArray(manifest.labs) ? manifest.labs.map(normalizeLabFolder).filter(isLabFolder) : [];
+}
+
+function normalizeLabFolder(value: unknown): LabFolder | null {
+  if (!isLabFolder(value)) {
+    return null;
+  }
+
+  const lab = value as LabFolder;
+  const index = isSlideItem(lab.index) ? lab.index : undefined;
+  const items = Array.isArray(lab.items) ? lab.items.filter(isSlideItem) : [];
+  const children = Array.isArray(lab.children) ? lab.children.map(normalizeLabFolder).filter(isLabFolder) : [];
+
+  return {
+    id: lab.id,
+    name: lab.name,
+    path: lab.path,
+    ...(index ? { index } : {}),
+    items,
+    children
+  };
+}
+
 function getSlideListSignature(items: SlideItem[]): string {
   return items
     .map((item) => [item.id || "", item.name, item.kind, item.url, item.modified || ""].join("\u001f"))
@@ -2686,6 +2714,7 @@ function collectLabPosters(folders: LabFolder[]): SlideItem[] {
   const items: SlideItem[] = [];
   for (const folder of folders) {
     items.push(...(folder.items || []).filter(isSlideItem));
+    items.push(...collectLabPosters(folder.children || []));
   }
   return items;
 }
