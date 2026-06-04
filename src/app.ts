@@ -242,6 +242,7 @@ let liveStreamEndsAt = 0;
 let liveStreamTimer = 0;
 let sizingRefreshToken = 0;
 let bannerKind: BannerKind | null = null;
+let bannerHideTimer = 0;
 let devMenuLongPressTimer = 0;
 let devMenuLongPressTriggered = false;
 
@@ -2812,9 +2813,13 @@ function clearStaticMessage(): void {
 }
 
 function showBanner(message: string, kind: BannerKind = "general"): void {
+  clearBannerHideTimer();
   bannerKind = kind;
   banner.textContent = message;
   banner.classList.add("visible");
+  if (kind === "general" && appMode === "announcements") {
+    bannerHideTimer = window.setTimeout(() => hideBanner("general"), 30000);
+  }
 }
 
 function hideBanner(kind?: BannerKind): void {
@@ -2822,9 +2827,17 @@ function hideBanner(kind?: BannerKind): void {
     return;
   }
 
+  clearBannerHideTimer();
   bannerKind = null;
   banner.textContent = "";
   banner.classList.remove("visible");
+}
+
+function clearBannerHideTimer(): void {
+  if (bannerHideTimer) {
+    window.clearTimeout(bannerHideTimer);
+    bannerHideTimer = 0;
+  }
 }
 
 function showDebugTitle(name: string): void {
