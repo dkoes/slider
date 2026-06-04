@@ -101,7 +101,7 @@ In four-up mode, each advance shifts the visible slides forward by one quarter a
 
 If the shared folder contains a `Labs` folder, the agent recursively syncs its subfolders. During interactive mode, use the top-left menu to switch between:
 
-- `Announcements`: the default slideshow from the root folder
+- `Announcements`: the default slideshow from PNG/PDF/HTML files in the root folder; root subfolders are synced for HTML assets but are not shown as announcements
 - `Posters`: a randomized slideshow of non-index PNG/PDF/HTML files directly inside each `Labs/*` folder
 - `Labs`: a hierarchical list of lab folders
 - Livestream menu items from `live_streams`: fullscreen video streams with a countdown timer

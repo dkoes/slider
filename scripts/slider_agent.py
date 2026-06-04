@@ -817,13 +817,39 @@ class SharePointSyncer:
                 slide = self.sync_child(child, self.config.slides_dir, "/slides", used_names)
                 if slide:
                     slides.append(slide)
-            elif "folder" in child and str(child.get("name") or "").lower() == "labs":
-                labs = self.sync_labs_root(child, drive_url, access_token)
+            elif "folder" in child:
+                if str(child.get("name") or "").lower() == "labs":
+                    labs = self.sync_labs_root(child, drive_url, access_token)
+                else:
+                    self.sync_asset_folder(child, drive_url, access_token, [])
 
         return {
             "slides": sorted(slides, key=lambda slide: slide["name"].lower()),
             "labs": labs,
         }
+
+    def sync_asset_folder(
+        self,
+        folder: dict[str, Any],
+        drive_url: str,
+        access_token: str,
+        parent_parts: list[str],
+    ) -> None:
+        name = str(folder.get("name") or "assets")
+        safe_name = safe_filename(name)
+        path_parts = parent_parts + [safe_name]
+        directory = self.config.slides_dir.joinpath(*path_parts)
+        url_prefix = "/" + "/".join(["slides", *[urllib.parse.quote(part) for part in path_parts]])
+        children = self.fetch_folder_children(drive_url, access_token, str(folder.get("id") or ""))
+        used_names: set[str] = set()
+
+        for child in children:
+            if not isinstance(child, dict):
+                continue
+            if "file" in child:
+                self.sync_child(child, directory, url_prefix, used_names)
+            elif "folder" in child:
+                self.sync_asset_folder(child, drive_url, access_token, path_parts)
 
     def sync_labs_root(self, labs_child: dict[str, Any], drive_url: str, access_token: str) -> list[dict[str, Any]]:
         children = self.fetch_folder_children(drive_url, access_token, str(labs_child.get("id") or ""))
