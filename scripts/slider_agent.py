@@ -914,18 +914,26 @@ class SharePointSyncer:
         self.synced_files.add(local_path)
         modified = str(child.get("lastModifiedDateTime") or child.get("cTag") or child.get("eTag") or "")
         existing = find_existing_slide(self.config.manifest_path, str(child.get("id") or name))
+        existing_url = existing.get("url") if existing else None
+        existing_path = self.local_path_from_url(existing_url) if isinstance(existing_url, str) else None
         if (
             kind
             and existing
             and existing.get("modified") == modified
-            and isinstance(existing.get("url"), str)
-            and (self.config.data_dir / existing["url"].lstrip("/")).exists()
+            and existing_path
+            and existing_path.exists()
         ):
+            if existing_path != local_path:
+                try:
+                    copy_existing_slide(existing_path, local_path)
+                except OSError as error:
+                    log_exception(f"Unable to reuse moved local file {existing_path}", error)
+                    download_atomic(self.opener, download_url, local_path)
             return {
                 "id": str(child.get("id") or name),
                 "name": name,
                 "kind": kind,
-                "url": str(existing["url"]),
+                "url": f"{url_prefix}/{urllib.parse.quote(local_name)}",
                 "modified": modified,
             }
 
@@ -1231,6 +1239,11 @@ def download_atomic(opener: urllib.request.OpenerDirector, url: str, target: Pat
         except OSError as cleanup_error:
             log_exception(f"Unable to remove partial download {temp_path}", cleanup_error)
         raise
+
+
+def copy_existing_slide(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
 
 
 def read_json(path: Path) -> dict[str, Any]:
