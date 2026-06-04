@@ -964,6 +964,12 @@ class SharePointSyncer:
                         path.unlink()
                     except OSError as error:
                         log_exception(f"Unable to remove unlisted file {path}", error)
+            for path in sorted(root.rglob("*"), reverse=True):
+                if path.is_dir():
+                    try:
+                        path.rmdir()
+                    except OSError:
+                        pass
 
     def local_path_from_url(self, url: str) -> Path:
         return self.config.data_dir / urllib.parse.unquote(url.lstrip("/"))
