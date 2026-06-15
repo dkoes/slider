@@ -1289,23 +1289,26 @@ async function advanceFourSlides(): Promise<void> {
   const [, topRightIndex] = activeFourIndices;
   const bottomLeftIndex = activeFourIndices[3];
   const welcomeIndex = getWelcomeSlideIndex();
-  const enteringIndex = bottomLeftIndex === welcomeIndex
-    ? bottomLeftIndex
-    : getNextFourSlideIndex();
+  const wrapWelcome = bottomLeftIndex === welcomeIndex;
+  const enteringIndex = wrapWelcome ? bottomLeftIndex : getNextFourSlideIndex();
 
   // Four-up advances in a serpentine path: new content enters top-left, the top
   // row shifts right, top-right wraps into bottom-right, and the bottom row
   // shifts left as bottom-left leaves.
-  const entering = createFourSlideArticle(enteringIndex);
-  entering.classList.add("quarter", "q0-enter", "active");
-  stage.append(entering);
+  const entering = wrapWelcome ? bottomLeft : createFourSlideArticle(enteringIndex);
+  if (!wrapWelcome) {
+    entering.classList.add("quarter", "q0-enter", "active");
+    stage.append(entering);
+  }
 
   const wrapped = createFourSlideArticle(topRightIndex);
   wrapped.classList.add("quarter", "q2-enter", "active");
   stage.append(wrapped);
 
   await waitForPaint();
-  bottomLeft.classList.add("q-exit");
+  if (!wrapWelcome) {
+    bottomLeft.classList.add("q-exit");
+  }
   topLeft && setQuarterClass(topLeft, 1);
   topRight.classList.add("q-wrap-exit");
   setQuarterClass(wrapped, 2);
@@ -1316,7 +1319,9 @@ async function advanceFourSlides(): Promise<void> {
   activeFourIndices = [enteringIndex, activeFourIndices[0], topRightIndex, activeFourIndices[2]];
 
   window.setTimeout(() => {
-    bottomLeft.remove();
+    if (!wrapWelcome) {
+      bottomLeft.remove();
+    }
     topRight.remove();
   }, 700);
 
