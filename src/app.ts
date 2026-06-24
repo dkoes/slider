@@ -1032,7 +1032,7 @@ function showAnnouncements(): void {
   posterIndex = -1;
   setMenuOpen(false);
   exitInteractiveMode();
-  stage.querySelectorAll(".lab-view").forEach((node) => node.remove());
+  stage.querySelectorAll(".lab-view, .cat-stream").forEach((node) => node.remove());
   activeFourSlides.forEach((node) => node.remove());
   activeFourSlides = [];
   activeFourIndices = [];
@@ -1060,7 +1060,7 @@ function showPosters(): void {
   posterIndex = -1;
   setMenuOpen(false);
   exitInteractiveMode();
-  stage.querySelectorAll(".lab-view").forEach((node) => node.remove());
+  stage.querySelectorAll(".lab-view, .cat-stream").forEach((node) => node.remove());
   activeFourSlides.forEach((node) => node.remove());
   activeFourSlides = [];
   activeFourIndices = [];
