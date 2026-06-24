@@ -25,19 +25,74 @@ Create a local `slider_config.json` next to `package.json`:
 cp slider_config.example.json slider_config.json
 ```
 
-Edit `slider_config.json`. The example file lists every supported setting and its default value. At minimum, set:
+Edit `slider_config.json`. At minimum, set `folder_url` to an anonymous SharePoint/OneDrive folder link. This annotated example lists every supported setting:
 
-```json
+```jsonc
 {
-  "folder_url": "https://your-tenant.sharepoint.com/:f:/..."
+  // Anonymous "Anyone with the link can view" SharePoint/OneDrive folder URL.
+  "folder_url": "https://your-tenant.sharepoint.com/:f:/...",
+
+  // Local HTTP server bind address and port.
+  "host": "127.0.0.1",
+  "port": 8788,
+
+  // How often the agent checks SharePoint, and when successful syncs become stale.
+  "sync_interval_seconds": 120,
+  "stale_after_seconds": 1800,
+
+  // On Windows, launch Chrome in kiosk mode after the first sync.
+  "autolaunch": true,
+  "chrome_path": "",
+
+  // Optional updater manifest URL for the hidden dev menu's Update action.
+  "update_url": "",
+
+  // Local cache directory for synced files and manifest.json.
+  "data_dir": "slider_data",
+
+  // Browser app manifest URL. Usually leave this at the local agent default.
+  "manifest_url": "/manifest.json",
+
+  // Announcement and poster autoplay timing.
+  "time_per_slide_seconds": 30,
+  "poster_time_seconds": 60,
+
+  // How long touch/mouse interaction pauses autoplay and keeps controls visible.
+  "interactive_pause_seconds": 120,
+
+  // Livestream timeout and menu entries.
+  "live_stream_minutes": 20,
+  "live_streams": {
+    "Cats": "https://www.youtube.com/watch?v=e9C9K8ltDfk",
+    "Puppies": "https://www.youtube.com/watch?v=h-Z0wCdD3dI",
+    "Jellyfish": "https://www.youtube.com/watch?v=m1XcdxjVGos",
+    "ISS": "https://www.youtube.com/watch?v=FuuC4dpSQ1M"
+  },
+
+  // true, false, or "auto"; auto enables four-up on estimated 4K displays.
+  "four_up": "auto",
+
+  // Poster display behavior.
+  "pan_posters": true,
+  "poster_slides_controls_always_visible": true,
+  "pan_fraction": 0.75,
+
+  // PDF rendering behavior.
+  "pdf_cache_size": 200,
+  "pdf_render_cache": true,
+  "pdf_initial_render_scale": 2,
+  "pdf_max_zoom_render_scale": 5,
+
+  // Show debug status text and extra console diagnostics.
+  "debug": false
 }
 ```
 
-`slider_config.json` is ignored by git so private or environment-specific folder URLs are not committed. Agent settings are read when the Python agent starts. App settings, such as `time_per_slide_seconds`, `poster_time_seconds`, `interactive_pause_seconds`, `live_streams`, `four_up`, `pan_posters`, `poster_slides_controls_always_visible`, `pan_fraction`, `pdf_cache_size`, `pdf_document_cache`, `pdf_render_cache`, `pdf_initial_render_scale`, `pdf_max_zoom_render_scale`, and `debug`, are embedded as defaults when you run `npm run build`, and a runtime `slider_config.json` next to the Python agent or packaged executable can override them when `slider.html` is served. URL parameters remain the final override. `four_up` can be `true`, `false`, or `"auto"`; auto enables four-up mode when the estimated physical screen or viewport is at least 3840x2160. Parsed PDF documents are cached by default; set `pdf_document_cache: false` to reload PDF.js documents for each render. Rendered PDF canvases are not cached by default; set `pdf_render_cache: true` to enable that cache. `pdf_initial_render_scale` controls the baseline PDF rasterization scale and defaults to `2`; oversized initial renders fall back to `1`. `pdf_max_zoom_render_scale` caps high-resolution PDF poster renders and defaults to `5`.
+`slider_config.json` is ignored by git so private or environment-specific folder URLs are not committed. Agent settings are read when the Python agent starts. App settings are embedded as defaults when you run `npm run build`, and a runtime `slider_config.json` next to the Python agent or packaged executable can override them when `slider.html` is served. URL parameters remain the final app override.
 
-You can also provide core agent settings with command-line flags or environment variables, such as `--folder` or `SLIDER_FOLDER_URL`. On Windows, the agent launches Chrome in kiosk mode by default after the server starts. Set `chrome_path` or `SLIDER_CHROME_PATH` to use a specific Chrome executable, or disable it with `autolaunch: false` or `--no-autolaunch`. The kiosk launch URL includes `kiosk=1` so the app hides its fullscreen menu option.
+Some settings also have legacy aliases: `manifest`, `time`, `time_seconds`, `poster_time`, `interactive_pause`, `sync_stale_after_seconds`, `stale_after`, `four`, `pdf_cache`, `render_cache`, `pdf_initial_scale`, and `pdf_zoom_render_scale`. You can also provide core agent settings with command-line flags or environment variables, such as `--folder` or `SLIDER_FOLDER_URL`. The kiosk launch URL includes `kiosk=1` so the app hides its fullscreen menu option.
 
-Set `update_url` in `slider_config.json` to a JSON manifest URL to enable the hidden dev menu's `Update` action. This value can be baked into `build/slider_agent.py` by `npm run build`, and a runtime `slider_config.json` next to the packaged executable can override it. It is not stored in checked-in source code and is not accepted from environment variables or command-line flags. The manifest should include `version`, `url`, and `sha256`; the Windows packaged executable always downloads the manifest's exe, verifies its SHA-256, closes Chrome, replaces itself with a helper script, and relaunches, even when the manifest version matches the running version. Update helper progress is written to `slider.update.log` next to the executable.
+The `update_url` manifest should include `version`, `url`, and `sha256`. The Windows packaged executable always downloads the manifest's exe, verifies its SHA-256, closes Chrome, replaces itself with a helper script, and relaunches, even when the manifest version matches the running version. Update helper progress is written to `slider.update.log` next to the executable.
 
 ## Run Locally
 
