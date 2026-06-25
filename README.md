@@ -156,12 +156,12 @@ In four-up mode, each advance shifts the visible slides forward by one quarter a
 
 If the shared folder contains a `Labs` folder, the agent recursively syncs its subfolders. During interactive mode, use the top-left menu to switch between:
 
-- `Announcements`: the default slideshow from PNG/PDF/HTML files in the root folder; root subfolders are synced for HTML assets but are not shown as announcements
-- `Posters`: a randomized slideshow of non-index PNG/PDF/HTML files directly inside each `Labs/*` folder
+- `Announcements`: the default slideshow from PNG/JPEG/WebP/GIF/SVG/PDF/HTML files in the root folder; root subfolders are synced for HTML assets but are not shown as announcements
+- `Posters`: a randomized slideshow of non-index PNG/JPEG/WebP/GIF/SVG/PDF/HTML files directly inside each `Labs/*` folder
 - `Labs`: a hierarchical list of lab folders
 - Livestream menu items from `live_streams`: fullscreen video streams with a countdown timer
 
-Each lab folder can include an `index.html` file plus PNG/PDF/HTML poster files. Selecting a lab shows `index.html` on the left two-thirds of the screen and a scrollable poster selector on the right. Selecting a poster opens it full-screen with the normal interactive navigation and zoom controls.
+Each lab folder can include an `index.html` file plus PNG/JPEG/WebP/GIF/SVG/PDF/HTML poster files. Selecting a lab shows `index.html` on the left two-thirds of the screen and a scrollable poster selector on the right. Selecting a poster opens it full-screen with the normal interactive navigation and zoom controls.
 
 Livestreams run for `live_stream_minutes` before returning to whichever autoplay mode, `Announcements` or `Posters`, was running most recently. Configure livestream menu items with a `live_streams` object mapping menu names to URLs; YouTube watch URLs are converted to embeds automatically.
 

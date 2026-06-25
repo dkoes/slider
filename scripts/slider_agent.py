@@ -48,6 +48,11 @@ class TeeTextWriter:
 
 SUPPORTED_EXTENSIONS = {
     ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".webp": "image",
+    ".gif": "image",
+    ".svg": "image",
     ".pdf": "pdf",
     ".html": "html",
     ".htm": "html",
@@ -1444,6 +1449,11 @@ def html_unescape(value: str) -> str:
 mimetypes.add_type("text/html", ".html")
 mimetypes.add_type("application/pdf", ".pdf")
 mimetypes.add_type("image/png", ".png")
+mimetypes.add_type("image/jpeg", ".jpg")
+mimetypes.add_type("image/jpeg", ".jpeg")
+mimetypes.add_type("image/webp", ".webp")
+mimetypes.add_type("image/gif", ".gif")
+mimetypes.add_type("image/svg+xml", ".svg")
 
 
 if __name__ == "__main__":
