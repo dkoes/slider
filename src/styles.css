@@ -224,7 +224,8 @@ body {
 
 .nav-control,
 .zoom-control,
-.menu-toggle {
+.menu-toggle,
+.lab-home-button {
   position: fixed;
   z-index: 18;
   display: grid;
@@ -242,15 +243,23 @@ body {
 
 .interactive .nav-control,
 .interactive .zoom-control,
-.interactive .menu-toggle {
+.interactive .menu-toggle,
+.interactive .lab-home-button {
   opacity: .7;
   pointer-events: auto;
 }
 
 .poster-controls-always-visible:not(.interactive) .nav-control,
 .poster-controls-always-visible:not(.interactive) .zoom-control,
-.poster-controls-always-visible:not(.interactive) .menu-toggle {
+.poster-controls-always-visible:not(.interactive) .menu-toggle,
+.poster-controls-always-visible:not(.interactive) .lab-home-button {
   opacity: 0.2;
+  pointer-events: auto;
+}
+
+.lab-poster-mode .menu-toggle,
+.lab-poster-mode .lab-home-button {
+  opacity: .7;
   pointer-events: auto;
 }
 
@@ -265,14 +274,36 @@ body {
   pointer-events: auto;
 }
 
-.menu-toggle {
+.menu-toggle,
+.lab-home-button {
   top: 18px;
-  left: 18px;
   width: 48px;
   height: 48px;
   border-radius: 8px;
+}
+
+.menu-toggle {
+  left: 18px;
   font-size: 27px;
   line-height: 1;
+}
+
+.lab-home-button {
+  left: 74px;
+  width: auto;
+  min-width: 48px;
+  max-width: min(220px, calc(100vw - 148px));
+  padding: 0 14px;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lab-home-button[hidden] {
+  display: none;
 }
 
 .menu-panel {
@@ -471,7 +502,8 @@ body {
 
 .nav-control:active,
 .zoom-control:active,
-.menu-toggle:active {
+.menu-toggle:active,
+.lab-home-button:active {
   background: rgba(247, 248, 251, 0.22);
 }
 

@@ -161,6 +161,7 @@ const stage = mustGetElement("stage");
 const statusNode = mustGetElement("status");
 const banner = mustGetElement("banner");
 const menuToggle = mustGetElement("menu-toggle") as HTMLButtonElement;
+const labHomeButton = mustGetElement("lab-home") as HTMLButtonElement;
 const menuPanel = mustGetElement("menu-panel");
 const devMenuPanel = mustGetElement("dev-menu-panel");
 const devMenuVersion = mustGetElement("dev-menu-version");
@@ -222,6 +223,7 @@ let interactivePauseUntil = 0;
 let controlsHideTimer = 0;
 let posterItems: SlideItem[] = [];
 let posterIndex = -1;
+let posterLab: LabFolder | null = null;
 let posterSlideshowItems: SlideItem[] = [];
 let posterSlideshowIndex = -1;
 let cycleNeedsRefresh = true;
@@ -347,6 +349,13 @@ function wireControls(): void {
   devMenuPanel.addEventListener("click", (event) => event.stopPropagation());
   announcementsButton.addEventListener("click", () => showAnnouncements());
   postersButton.addEventListener("click", () => showPosters());
+  labHomeButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    pauseForInteraction();
+    if (posterLab?.index) {
+      showLab(posterLab);
+    }
+  });
   fullscreenButton.addEventListener("click", () => {
     void enterFullscreen();
   });
@@ -1030,6 +1039,7 @@ function showAnnouncements(): void {
   stopLiveStreamCountdown();
   posterItems = [];
   posterIndex = -1;
+  posterLab = null;
   setMenuOpen(false);
   exitInteractiveMode();
   stage.querySelectorAll(".lab-view, .cat-stream").forEach((node) => node.remove());
@@ -1058,6 +1068,7 @@ function showPosters(): void {
   stopLiveStreamCountdown();
   posterItems = [];
   posterIndex = -1;
+  posterLab = null;
   setMenuOpen(false);
   exitInteractiveMode();
   stage.querySelectorAll(".lab-view, .cat-stream").forEach((node) => node.remove());
@@ -1083,6 +1094,7 @@ function showPosters(): void {
 function showLiveStream(stream: LiveStreamConfig): void {
   setMenuOpen(false);
   exitInteractiveMode();
+  posterLab = null;
   setAppMode("live-stream");
   activeSlide?.remove();
   activeSlide = null;
@@ -1181,6 +1193,7 @@ function showLab(lab: LabFolder): void {
   stopLiveStreamCountdown();
   posterItems = (lab.items || []).filter(isSlideItem);
   posterIndex = -1;
+  posterLab = lab;
   setMenuOpen(false);
   exitInteractiveMode();
   activeSlide?.remove();
@@ -2390,11 +2403,21 @@ function setAppMode(mode: AppMode): void {
   appMode = mode;
   document.body.classList.toggle("lab-mode", mode === "lab");
   document.body.classList.toggle("live-stream-mode", mode === "live-stream");
+  document.body.classList.toggle("lab-poster-mode", mode === "poster" && Boolean(posterLab?.index));
   document.body.classList.toggle("four-mode", config.fourUp && mode === "announcements");
   document.body.classList.toggle(
     "poster-controls-always-visible",
     config.posterSlidesControlsAlwaysVisible && isPosterDisplayMode()
   );
+  const showLabHome = mode === "poster" && Boolean(posterLab?.index);
+  labHomeButton.hidden = !showLabHome;
+  if (showLabHome && posterLab) {
+    labHomeButton.textContent = posterLab.name;
+    labHomeButton.setAttribute("aria-label", `Open ${posterLab.name} main page`);
+  } else {
+    labHomeButton.textContent = "";
+    labHomeButton.setAttribute("aria-label", "Open lab main page");
+  }
 }
 
 function exitInteractiveMode(): void {
