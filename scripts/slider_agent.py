@@ -13,6 +13,7 @@ import os
 import posixpath
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,8 @@ from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from typing import Any
+
+import certifi
 
 
 class TeeTextWriter:
@@ -554,9 +557,15 @@ def check_for_update(config: AgentConfig) -> dict[str, Any]:
     }
 
 
+def update_ssl_context() -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    context.load_verify_locations(cafile=certifi.where())
+    return context
+
+
 def fetch_update_manifest(url: str) -> dict[str, Any]:
     request = urllib.request.Request(url, headers=default_headers("application/json"))
-    with urllib.request.urlopen(request, timeout=30) as response:
+    with urllib.request.urlopen(request, timeout=30, context=update_ssl_context()) as response:
         payload = json.loads(response.read().decode("utf-8"))
     if not isinstance(payload, dict):
         raise RuntimeError("Update manifest was not a JSON object.")
@@ -570,7 +579,7 @@ def download_update(url: str, target: Path) -> None:
     os.close(fd)
     temp_path = Path(temp_name)
     try:
-        with urllib.request.urlopen(request, timeout=300) as response, temp_path.open("wb") as output:
+        with urllib.request.urlopen(request, timeout=300, context=update_ssl_context()) as response, temp_path.open("wb") as output:
             shutil.copyfileobj(response, output)
         temp_path.replace(target)
     except Exception as error:

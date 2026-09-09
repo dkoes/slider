@@ -183,11 +183,12 @@ Refresh the browser after a rebuild to pick up embedded HTML/JS/CSS changes.
 
 ## Windows Packaging
 
-The agent uses only the Python standard library. For a Windows deployment that does not require installing Python, package it with PyInstaller:
+The agent requires `certifi` for update certificate verification. For source usage, install it with `python3 -m pip install -r requirements.txt`. Update requests trust both the system certificates and certifi's CA bundle, with certificate and hostname verification enabled. The release script upgrades certifi before packaging and includes its CA bundle in the executable. For a Windows deployment that does not require installing Python, package it with PyInstaller:
 
 ```sh
 npm run build
-py -m PyInstaller --onefile build/slider_agent.py
+py -m pip install --upgrade -r requirements.txt
+py -m PyInstaller --onefile --collect-data certifi build/slider_agent.py
 ```
 
 No separate `slider.html` is needed. The `npm run build` step embeds both the slider UI and the current `slider_config.json` defaults into `build/slider_agent.py`. A `slider_config.json` next to the executable can override embedded agent and app defaults at runtime; environment variables and command-line flags can also override agent settings. The executable creates and updates `slider_data/` next to where it runs unless `--data-dir` is provided.

@@ -10,7 +10,9 @@ Example:
   scripts/package_release.sh user@bits.csb.pitt.edu:/var/www/html/slider_updates https://bits.csb.pitt.edu/slider_updates
 
 Environment overrides:
-  PYINSTALLER   PyInstaller command to run. Default: py -m PyInstaller
+  PYTHON        Python command to run. Default: py
+  PYINSTALLER   PyInstaller command to run. Default: <PYTHON> -m PyInstaller
+                If overridden, use the same Python environment as PYTHON.
   EXE_NAME      Base executable name. Default: slider
   RELEASE_DIR   Local release artifact directory. Default: release
 USAGE
@@ -23,7 +25,8 @@ fi
 
 SCP_DESTINATION="$1"
 PUBLIC_BASE_URL="${2%/}"
-PYINSTALLER="${PYINSTALLER:-py -m PyInstaller}"
+PYTHON="${PYTHON:-py}"
+PYINSTALLER="${PYINSTALLER:-${PYTHON} -m PyInstaller}"
 EXE_NAME="${EXE_NAME:-slider}"
 RELEASE_DIR="${RELEASE_DIR:-release}"
 
@@ -73,8 +76,10 @@ echo "Building embedded slider assets..."
 npm run build
 
 echo "Packaging ${EXE_NAME}.exe with PyInstaller..."
+read -r -a PYTHON_COMMAND <<< "${PYTHON}"
+"${PYTHON_COMMAND[@]}" -m pip install --upgrade -r requirements.txt
 read -r -a PYINSTALLER_COMMAND <<< "${PYINSTALLER}"
-"${PYINSTALLER_COMMAND[@]}" --noconfirm --clean --onefile --name "${EXE_NAME}" build/slider_agent.py
+"${PYINSTALLER_COMMAND[@]}" --noconfirm --clean --onefile --collect-data certifi --name "${EXE_NAME}" build/slider_agent.py
 
 mkdir -p "${RELEASE_DIR}"
 cp "dist/${EXE_NAME}.exe" "${ARTIFACT_PATH}"
