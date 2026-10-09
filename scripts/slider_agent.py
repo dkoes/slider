@@ -257,6 +257,8 @@ def render_embedded_slider_html(config_path: Path) -> str:
 
 def format_runtime_slider_defaults(config: dict[str, Any]) -> str:
     assignments = []
+    add_number_assignment(assignments, "SLIDER_POSTER_RECENT_COUNT", config.get("poster_recent_count"), minimum=0)
+    add_number_assignment(assignments, "SLIDER_POSTER_RANDOM_COUNT", config.get("poster_random_count"), minimum=0)
     add_string_assignment(assignments, "SLIDER_MANIFEST_URL", first_config_value(config, "manifest_url", "manifest"))
     add_number_assignment(
         assignments,
@@ -341,7 +343,7 @@ def add_object_assignment(assignments: list[str], name: str, value: Any) -> None
 
 def add_number_assignment(assignments: list[str], name: str, value: Any, minimum: float = 0) -> None:
     number = parse_number(value)
-    if number is None or number < minimum or (minimum == 0 and number == 0 and name != "SLIDER_PDF_CACHE_SIZE"):
+    if number is None or number < minimum or (minimum == 0 and number == 0 and name not in {"SLIDER_PDF_CACHE_SIZE", "SLIDER_POSTER_RECENT_COUNT", "SLIDER_POSTER_RANDOM_COUNT"}):
         return
 
     assignments.append(f"      window.{name} = {json.dumps(number)};")
@@ -953,6 +955,10 @@ class SharePointSyncer:
         local_path = directory / local_name
         self.synced_files.add(local_path)
         modified = str(child.get("lastModifiedDateTime") or child.get("cTag") or child.get("eTag") or "")
+        remote_dates = {
+            "modifiedAt": str(child.get("lastModifiedDateTime") or ""),
+            "createdAt": str(child.get("createdDateTime") or ""),
+        }
         existing = find_existing_slide(self.config.manifest_path, str(child.get("id") or name))
         existing_url = existing.get("url") if existing else None
         existing_path = self.local_path_from_url(existing_url) if isinstance(existing_url, str) else None
@@ -975,6 +981,7 @@ class SharePointSyncer:
                 "kind": kind,
                 "url": f"{url_prefix}/{urllib.parse.quote(local_name)}",
                 "modified": modified,
+                **remote_dates,
             }
 
         download_atomic(self.opener, download_url, local_path)
@@ -987,6 +994,7 @@ class SharePointSyncer:
             "kind": kind,
             "url": f"{url_prefix}/{urllib.parse.quote(local_name)}",
             "modified": modified,
+            **remote_dates,
         }
 
     def remove_unlisted_files(self, slides: list[dict[str, str]], labs: list[dict[str, Any]]) -> None:

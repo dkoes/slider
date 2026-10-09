@@ -9,6 +9,8 @@ interface SliderGlobals {
   SLIDER_MANIFEST_URL?: string;
   SLIDER_TIME_PER_SLIDE_SECONDS?: number;
   SLIDER_POSTER_TIME_SECONDS?: number;
+  SLIDER_POSTER_RECENT_COUNT?: number;
+  SLIDER_POSTER_RANDOM_COUNT?: number;
   SLIDER_INTERACTIVE_PAUSE_SECONDS?: number;
   SLIDER_SYNC_STALE_AFTER_SECONDS?: number;
   SLIDER_LIVE_STREAM_MINUTES?: number;
@@ -58,6 +60,8 @@ interface SlideItem {
   kind: SlideKind;
   url: string;
   modified?: string;
+  modifiedAt?: string;
+  createdAt?: string;
 }
 
 interface SyncState {
@@ -88,6 +92,8 @@ interface SliderConfig {
   manifestUrl: string;
   timePerSlideSeconds: number;
   posterTimeSeconds: number;
+  posterRecentCount: number;
+  posterRandomCount: number;
   interactivePauseSeconds: number;
   syncStaleAfterSeconds: number;
   liveStreamMinutes: number;
@@ -627,6 +633,8 @@ function getConfig(): SliderConfig {
 
   return {
     manifestUrl,
+    posterRecentCount: posterCount(params.get("poster_recent_count") ?? globals.SLIDER_POSTER_RECENT_COUNT),
+    posterRandomCount: posterCount(params.get("poster_random_count") ?? globals.SLIDER_POSTER_RANDOM_COUNT),
     timePerSlideSeconds,
     // Posters default to a slower cadence because dense poster content generally
     // needs more reading time than announcements.
@@ -710,7 +718,7 @@ async function refreshSlides(config: SliderConfig): Promise<void> {
     // Poster mode is intentionally randomized once per pass. A manifest refresh
     // starts the next pass with a new flattened order from every lab folder.
     if (appMode === "posters" || posterSlideshowItems.length === 0) {
-      posterSlideshowItems = shuffleSlides(collectLabPosters(labs));
+      posterSlideshowItems = selectPosterSlides(collectLabPosters(labs), getConfig());
       posterSlideshowIndex = -1;
     }
 
@@ -1081,7 +1089,7 @@ function showPosters(): void {
   // Entering Posters starts a fresh randomized pass through non-index files in
   // each immediate Labs/* folder; later passes refresh the manifest first and
   // reshuffle again.
-  posterSlideshowItems = shuffleSlides(collectLabPosters(labs));
+  posterSlideshowItems = selectPosterSlides(collectLabPosters(labs), getConfig());
   posterSlideshowIndex = -1;
   if (posterSlideshowItems.length > 0) {
     posterSlideshowIndex = 0;
@@ -2825,6 +2833,33 @@ function collectLabPosters(folders: LabFolder[]): SlideItem[] {
     items.push(...(folder.items || []).filter(isSlideItem));
   }
   return items;
+}
+
+function posterCount(value: unknown): number {
+  const count = Number(value);
+  return Number.isFinite(count) && count >= 0 ? Math.floor(count) : 0;
+}
+
+function posterDate(item: SlideItem): number {
+  // Only remote metadata is used; modified can be a cache tag in older manifests.
+  for (const value of [item.modifiedAt, item.createdAt, item.modified]) {
+    const timestamp = value && /^\d{4}-\d{2}-\d{2}T/.test(value) ? Date.parse(value) : NaN;
+    if (Number.isFinite(timestamp)) return timestamp;
+  }
+  return -Infinity;
+}
+
+function selectPosterSlides(items: SlideItem[], config: SliderConfig): SlideItem[] {
+  const recentCount = config.posterRecentCount;
+  const randomCount = config.posterRandomCount;
+  if (recentCount === 0 && randomCount === 0) return shuffleSlides(items);
+  const ranked = [...items].sort((a, b) => {
+    const dateDifference = posterDate(b) - posterDate(a);
+    return dateDifference || (a.id || a.url).localeCompare(b.id || b.url);
+  });
+  const recent = ranked.slice(0, recentCount);
+  const older = shuffleSlides(ranked.slice(recentCount)).slice(0, randomCount);
+  return shuffleSlides([...recent, ...older]);
 }
 
 function shuffleSlides(items: SlideItem[]): SlideItem[] {

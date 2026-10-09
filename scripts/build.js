@@ -98,6 +98,8 @@ function getSliderDefaults(config, appVersion) {
 
   return {
     appVersion,
+    posterRecentCount: config.poster_recent_count ?? 0,
+    posterRandomCount: config.poster_random_count ?? 0,
     manifestUrl: stringValue(firstDefined(config.manifest_url, config.manifest), "/manifest.json"),
     timePerSlideSeconds,
     posterTimeSeconds: positiveNumber(
@@ -191,6 +193,8 @@ function formatSliderDefaults(defaults) {
     ["SLIDER_MANIFEST_URL", defaults.manifestUrl],
     ["SLIDER_TIME_PER_SLIDE_SECONDS", defaults.timePerSlideSeconds],
     ["SLIDER_POSTER_TIME_SECONDS", defaults.posterTimeSeconds],
+    ["SLIDER_POSTER_RECENT_COUNT", defaults.posterRecentCount],
+    ["SLIDER_POSTER_RANDOM_COUNT", defaults.posterRandomCount],
     ["SLIDER_INTERACTIVE_PAUSE_SECONDS", defaults.interactivePauseSeconds],
     ["SLIDER_SYNC_STALE_AFTER_SECONDS", defaults.syncStaleAfterSeconds],
     ["SLIDER_LIVE_STREAM_MINUTES", defaults.liveStreamMinutes],
