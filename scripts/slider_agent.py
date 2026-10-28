@@ -72,6 +72,7 @@ DEFAULT_CHROME_PATH = ""
 DEFAULT_UPDATE_URL = ""
 APP_VERSION = "0.1.0"
 EMBEDDED_SLIDER_HTML = None
+TRANSIENT_SYNC_ERROR_THRESHOLD = 3
 
 
 @dataclass
@@ -786,6 +787,8 @@ class SharePointSyncer:
                     "sync": {
                         "status": "ok",
                         "error": "",
+                        "consecutiveTransientFailures": 0,
+                        "errorSuppressed": False,
                         "lastAttempt": attempt,
                         "lastSuccess": attempt,
                         "staleAfterSeconds": self.config.stale_after_seconds,
@@ -1027,11 +1030,21 @@ class SharePointSyncer:
         # showing cached local content while surfacing sync health in the banner.
         manifest = read_json(self.config.manifest_path) or {}
         sync = manifest.get("sync") if isinstance(manifest.get("sync"), dict) else {}
+        # Count actual sync attempts, not browser reads of the same manifest.
+        # Persist the streak so a browser reload or agent restart cannot hide a
+        # recurring failure. A successful sync or a different error resets it.
+        previous_count = sync.get("consecutiveTransientFailures", 0)
+        if sync.get("status") != "error" or not isinstance(previous_count, int) or previous_count < 0:
+            previous_count = 0
+        transient = bool(re.search(r"handshake|timed?\s*out|timeout", error, re.IGNORECASE))
+        failure_count = previous_count + 1 if transient else 0
         manifest["generatedAt"] = attempt
         manifest["source"] = self.config.folder_url
         manifest["sync"] = {
             "status": "error",
             "error": error,
+            "consecutiveTransientFailures": failure_count,
+            "errorSuppressed": transient and failure_count < TRANSIENT_SYNC_ERROR_THRESHOLD,
             "lastAttempt": attempt,
             "lastSuccess": sync.get("lastSuccess", ""),
             "staleAfterSeconds": self.config.stale_after_seconds,
@@ -1380,6 +1393,8 @@ def make_handler(config: AgentConfig, syncer: SharePointSyncer) -> type[SimpleHT
                     sync = manifest.get("sync") if isinstance(manifest.get("sync"), dict) else {}
                     if sync.get("status") == "ok":
                         self.send_json(200, {"status": "ok", "message": "Manual sync complete."})
+                    elif sync.get("errorSuppressed"):
+                        self.send_json(202, {"status": "retrying", "message": "Sync delayed; will retry automatically."})
                     else:
                         message = str(sync.get("error") or "Manual sync did not complete.")
                         self.send_json(500, {"status": "error", "message": message})

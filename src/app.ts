@@ -67,6 +67,7 @@ interface SlideItem {
 interface SyncState {
   status?: SyncStatus;
   error?: string;
+  errorSuppressed?: boolean;
   lastAttempt?: string;
   lastSuccess?: string;
   staleAfterSeconds?: number;
@@ -157,6 +158,12 @@ interface ViewTransform {
   y: number;
 }
 
+interface FourSlideTransition {
+  extraNodes: HTMLElement[];
+  cleanupTimer: number;
+  finish(): void;
+}
+
 interface PointerState {
   id: number;
   x: number;
@@ -215,6 +222,7 @@ let appMode: AppMode = "announcements";
 let activeSlide: HTMLElement | null = null;
 let activeFourSlides: HTMLElement[] = [];
 let activeFourIndices: number[] = [];
+let fourSlideTransition: FourSlideTransition | null = null;
 let nextFourSlideIndex = 0;
 let fourUpCycleWrapped = false;
 let slideRenderToken = 0;
@@ -725,9 +733,7 @@ async function refreshSlides(config: SliderConfig): Promise<void> {
     // Four-up mode holds live DOM nodes for each quadrant; rebuild them when the
     // manifest changes so stale indices do not point at removed or updated slides.
     if (config.fourUp && slidesChanged) {
-      activeFourSlides.forEach((node) => node.remove());
-      activeFourSlides = [];
-      activeFourIndices = [];
+      clearFourSlides();
       nextFourSlideIndex = 0;
       fourUpCycleWrapped = false;
       if (appMode === "announcements" && slides.length > 0) {
@@ -796,7 +802,7 @@ function updateSyncBanner(manifest: SlideManifest, config: SliderConfig): void {
   const staleAfterSeconds = sync?.staleAfterSeconds || config.syncStaleAfterSeconds;
   const staleMessage = getStaleMessage(sync?.lastSuccess, staleAfterSeconds);
 
-  if (sync?.status && sync.status !== "ok") {
+  if (sync?.status && sync.status !== "ok" && !sync.errorSuppressed) {
     const detail = sync.error ? `: ${sync.error}` : "";
     showBanner(`Slide sync ${sync.status}${detail}`, "sync");
     return;
@@ -843,8 +849,7 @@ async function showSlide(slide: SlideItem, direction: "next" | "previous" = "nex
   if (appMode === "announcements" || appMode === "posters" || appMode === "poster") {
     stage.querySelectorAll(".lab-view, .cat-stream").forEach((node) => node.remove());
   }
-  activeFourSlides.forEach((node) => node.remove());
-  activeFourSlides = [];
+  clearFourSlides();
 
   // Append first, then wait one frame before toggling classes so CSS transitions
   // see a real "before" and "after" state.
@@ -1051,9 +1056,7 @@ function showAnnouncements(): void {
   setMenuOpen(false);
   exitInteractiveMode();
   stage.querySelectorAll(".lab-view, .cat-stream").forEach((node) => node.remove());
-  activeFourSlides.forEach((node) => node.remove());
-  activeFourSlides = [];
-  activeFourIndices = [];
+  clearFourSlides();
   activeSlide?.remove();
   activeSlide = null;
   if (slides.length > 0) {
@@ -1080,9 +1083,7 @@ function showPosters(): void {
   setMenuOpen(false);
   exitInteractiveMode();
   stage.querySelectorAll(".lab-view, .cat-stream").forEach((node) => node.remove());
-  activeFourSlides.forEach((node) => node.remove());
-  activeFourSlides = [];
-  activeFourIndices = [];
+  clearFourSlides();
   activeSlide?.remove();
   activeSlide = null;
 
@@ -1106,9 +1107,7 @@ function showLiveStream(stream: LiveStreamConfig): void {
   setAppMode("live-stream");
   activeSlide?.remove();
   activeSlide = null;
-  activeFourSlides.forEach((node) => node.remove());
-  activeFourSlides = [];
-  activeFourIndices = [];
+  clearFourSlides();
   stage.querySelectorAll(".slide, .lab-view, .cat-stream").forEach((node) => node.remove());
 
   const view = document.createElement("article");
@@ -1206,8 +1205,7 @@ function showLab(lab: LabFolder): void {
   exitInteractiveMode();
   activeSlide?.remove();
   activeSlide = null;
-  activeFourSlides.forEach((node) => node.remove());
-  activeFourSlides = [];
+  clearFourSlides();
   stage.querySelectorAll(".slide, .lab-view, .cat-stream").forEach((node) => node.remove());
 
   // Lab mode is a split browsing view: index.html on the left, poster chooser on
@@ -1292,7 +1290,19 @@ function showPoster(
   void showSlideWithManualLoading(item, direction, loadingButton);
 }
 
-async function advanceFourSlides(): Promise<void> {
+async function advanceFourSlides(manual = false): Promise<void> {
+  if (appMode !== "announcements" || !config.fourUp || slides.length === 0) {
+    return;
+  }
+  // Manual navigation finishes the previous step, including one still waiting
+  // for paint. Every press counts without queuing work after a mode change.
+  if (fourSlideTransition) {
+    if (!manual) {
+      return;
+    }
+    fourSlideTransition.finish();
+  }
+
   activeSlide?.remove();
   activeSlide = null;
 
@@ -1307,8 +1317,7 @@ async function advanceFourSlides(): Promise<void> {
   }
 
   const [topLeft, topRight, bottomRight, bottomLeft] = activeFourSlides;
-  const [, topRightIndex] = activeFourIndices;
-  const bottomLeftIndex = activeFourIndices[3];
+  const [topLeftIndex, topRightIndex, bottomRightIndex, bottomLeftIndex] = activeFourIndices;
   const welcomeIndex = getWelcomeSlideIndex();
   const wrapWelcome = bottomLeftIndex === welcomeIndex;
   const enteringIndex = wrapWelcome ? bottomLeftIndex : getNextFourSlideIndex();
@@ -1317,47 +1326,84 @@ async function advanceFourSlides(): Promise<void> {
   // row shifts right, top-right wraps into bottom-right, and the bottom row
   // shifts left as bottom-left leaves.
   const entering = wrapWelcome ? bottomLeft : createFourSlideArticle(enteringIndex);
+  const wrapped = createFourSlideArticle(topRightIndex);
+  // Construct both tiles before locking or appending, so a rendering setup error
+  // leaves the current layout usable and cannot leave navigation locked.
+  let committed = false;
+  const commit = (): void => {
+    if (committed) {
+      return;
+    }
+    committed = true;
+    if (!wrapWelcome) {
+      bottomLeft.classList.add("q-exit");
+    }
+    setQuarterClass(topLeft, 1);
+    topRight.classList.add("q-wrap-exit");
+    setQuarterClass(wrapped, 2);
+    setQuarterClass(bottomRight, 3);
+    setQuarterClass(entering, 0);
+
+    activeFourSlides = [entering, topLeft, wrapped, bottomRight];
+    activeFourIndices = [enteringIndex, topLeftIndex, topRightIndex, bottomRightIndex];
+    // After committing, the temporary nodes are the outgoing tiles. Keep them
+    // owned until cleanup so a rebuild also removes tiles still animating out.
+    transition.extraNodes = wrapWelcome ? [topRight] : [bottomLeft, topRight];
+
+    showDebugTitle(getFourUpTitle());
+    setDefaultFourUpTransformTarget();
+    preloadUpcomingPdfs();
+  };
+  const transition: FourSlideTransition = {
+    extraNodes: wrapWelcome ? [wrapped] : [entering, wrapped],
+    cleanupTimer: 0,
+    finish(): void {
+      if (fourSlideTransition !== transition) {
+        return;
+      }
+      commit();
+      // Finish only animations on the tiles themselves; poster panning and
+      // other animations inside their content keep running.
+      activeFourSlides.forEach((tile) => tile.getAnimations().forEach((animation) => animation.finish()));
+      window.clearTimeout(transition.cleanupTimer);
+      transition.extraNodes.forEach((node) => node.remove());
+      fourSlideTransition = null;
+    }
+  };
+  fourSlideTransition = transition;
   if (!wrapWelcome) {
     entering.classList.add("quarter", "q0-enter", "active");
     stage.append(entering);
   }
 
-  const wrapped = createFourSlideArticle(topRightIndex);
   wrapped.classList.add("quarter", "q2-enter", "active");
   stage.append(wrapped);
 
   await waitForPaint();
-  if (!wrapWelcome) {
-    bottomLeft.classList.add("q-exit");
+  // A manifest refresh, resize, or navigation may have removed this layout.
+  if (fourSlideTransition !== transition) {
+    return;
   }
-  topLeft && setQuarterClass(topLeft, 1);
-  topRight.classList.add("q-wrap-exit");
-  setQuarterClass(wrapped, 2);
-  bottomRight && setQuarterClass(bottomRight, 3);
-  setQuarterClass(entering, 0);
+  commit();
+  transition.cleanupTimer = window.setTimeout(transition.finish, 700);
+}
 
-  activeFourSlides = [entering, topLeft, wrapped, bottomRight].filter(Boolean);
-  activeFourIndices = [enteringIndex, activeFourIndices[0], topRightIndex, activeFourIndices[2]];
-
-  window.setTimeout(() => {
-    if (!wrapWelcome) {
-      bottomLeft.remove();
-    }
-    topRight.remove();
-  }, 700);
-
-  showDebugTitle(getFourUpTitle());
-  setDefaultFourUpTransformTarget();
-  preloadUpcomingPdfs();
+function clearFourSlides(): void {
+  if (fourSlideTransition) {
+    window.clearTimeout(fourSlideTransition.cleanupTimer);
+    fourSlideTransition.extraNodes.forEach((node) => node.remove());
+    fourSlideTransition = null;
+  }
+  activeFourSlides.forEach((node) => node.remove());
+  activeFourSlides = [];
+  activeFourIndices = [];
 }
 
 function initializeFourSlides(): void {
   activeSlide?.remove();
   activeSlide = null;
   clearStaticMessage();
-  activeFourSlides.forEach((node) => node.remove());
-  activeFourSlides = [];
-  activeFourIndices = [];
+  clearFourSlides();
   const indices = getInitialFourSlideIndices();
   for (let offset = 0; offset < indices.length; offset += 1) {
     const index = indices[offset];
@@ -2616,7 +2662,7 @@ function setDefaultFourUpTransformTarget(): void {
 }
 
 function showPreviousSlide(loadingButton?: HTMLButtonElement): void {
-  if (appMode === "lab") {
+  if (appMode === "lab" || appMode === "live-stream") {
     return;
   }
 
@@ -2646,7 +2692,7 @@ function showPreviousSlide(loadingButton?: HTMLButtonElement): void {
 }
 
 function showNextSlide(loadingButton?: HTMLButtonElement): void {
-  if (appMode === "lab") {
+  if (appMode === "lab" || appMode === "live-stream") {
     return;
   }
 
@@ -2668,7 +2714,7 @@ function showNextSlide(loadingButton?: HTMLButtonElement): void {
   }
 
   if (config.fourUp) {
-    void advanceFourSlides();
+    void advanceFourSlides(true);
   } else {
     slideIndex = (slideIndex + 1) % slides.length;
     void showSlideWithManualLoading(slides[slideIndex], "next", loadingButton);
@@ -2676,10 +2722,9 @@ function showNextSlide(loadingButton?: HTMLButtonElement): void {
 }
 
 function rewindFourSlides(): void {
+  fourSlideTransition?.finish();
   const count = Math.min(4, slides.length);
   nextFourSlideIndex = (nextFourSlideIndex - count - 1 + slides.length * 2) % slides.length;
-  activeFourSlides = [];
-  activeFourIndices = [];
   initializeFourSlides();
 }
 
